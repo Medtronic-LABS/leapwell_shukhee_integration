@@ -1,22 +1,32 @@
 {
  "actions": [],
- "creation": "2026-09-01 00:00:00.000000",
+ "creation": "2026-09-01 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "base_url"
+  "base_url",
+  "video_call_base_url"
  ],
  "fields": [
   {
+   "description": "Base URL of the Shukhee REST API, e.g. https://dev-api.shukhee.com",
    "fieldname": "base_url",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Base URL",
-   "description": "Base URL of the Shukhee API, e.g. https://api.shukhee.example.com"
+   "reqd": 1
+  },
+  {
+   "description": "Host for the video-call WebView join URL -- a different service from the REST API base_url, e.g. https://dev-ssk.grameendhs.com",
+   "fieldname": "video_call_base_url",
+   "fieldtype": "Data",
+   "label": "Video Call Base URL",
+   "reqd": 1
   }
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-09-01 00:00:00.000000",
+ "modified": "2026-09-01 16:03:51.180424",
  "modified_by": "Administrator",
  "module": "Shukhee Integration",
  "name": "Shukhee Settings",
@@ -28,6 +38,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []

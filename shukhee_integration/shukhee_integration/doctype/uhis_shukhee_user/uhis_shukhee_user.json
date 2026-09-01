@@ -1,25 +1,16 @@
 {
  "actions": [],
- "autoname": "field:uhis",
- "creation": "2026-09-01 00:00:00.000000",
+ "autoname": "field:provider",
+ "creation": "2026-09-01 00:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "uhis",
+  "provider",
   "shukhee_username",
   "shukhee_password",
   "status"
  ],
  "fields": [
-  {
-   "fieldname": "uhis",
-   "fieldtype": "Link",
-   "in_list_view": 1,
-   "label": "UHIS",
-   "options": "Provider",
-   "reqd": 1,
-   "unique": 1
-  },
   {
    "fieldname": "shukhee_username",
    "fieldtype": "Data",
@@ -39,13 +30,23 @@
    "in_list_view": 1,
    "label": "Status",
    "options": "Active\nInactive"
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Provider(UHIS)",
+   "options": "Provider",
+   "reqd": 1,
+   "unique": 1
   }
  ],
  "links": [],
- "modified": "2026-09-01 00:00:00.000000",
+ "modified": "2026-09-01 16:01:21.917723",
  "modified_by": "Administrator",
  "module": "Shukhee Integration",
  "name": "UHIS Shukhee User",
+ "naming_rule": "By fieldname",
  "owner": "Administrator",
  "permissions": [
   {
@@ -61,7 +62,9 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "title_field": "provider"
 }

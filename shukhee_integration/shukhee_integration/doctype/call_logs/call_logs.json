@@ -9,9 +9,17 @@
   "uhis_user",
   "patient_id",
   "contact_number",
+  "encounter_id",
+  "reason",
+  "speciality_id",
+  "requested_speciality",
+  "call_type",
   "request_id",
+  "transaction_id",
   "call_url",
-  "status"
+  "status",
+  "prescription_link",
+  "invoice_link"
  ],
  "fields": [
   {
@@ -31,7 +39,8 @@
   {
    "fieldname": "patient_id",
    "fieldtype": "Data",
-   "label": "Patient ID"
+   "label": "Patient ID",
+   "description": "Shukhee-side patient id (resolved/created server-side from contact_number)."
   },
   {
    "fieldname": "contact_number",
@@ -39,21 +48,68 @@
    "label": "Contact Number"
   },
   {
+   "fieldname": "encounter_id",
+   "fieldtype": "Data",
+   "label": "Encounter ID",
+   "description": "Optional identifier supplied by the app; no FK, carried through for later correlation to the visit."
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "speciality_id",
+   "fieldtype": "Data",
+   "label": "Speciality ID"
+  },
+  {
+   "fieldname": "requested_speciality",
+   "fieldtype": "Data",
+   "label": "Requested Speciality"
+  },
+  {
+   "default": "video",
+   "fieldname": "call_type",
+   "fieldtype": "Select",
+   "label": "Call Type",
+   "options": "voice\nvideo"
+  },
+  {
    "fieldname": "request_id",
    "fieldtype": "Data",
    "label": "Request ID"
   },
   {
-   "fieldname": "call_url",
+   "fieldname": "transaction_id",
    "fieldtype": "Data",
-   "label": "Call URL"
+   "label": "Transaction ID"
   },
   {
+   "fieldname": "call_url",
+   "fieldtype": "Small Text",
+   "label": "Call URL",
+   "description": "Includes a live Shukhee access token in the query string -- can exceed Data's 140-char limit."
+  },
+  {
+   "default": "pending",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "Initiated\nRinging\nAnswered\nCompleted\nFailed\nNo Answer"
+   "options": "pending\nconfirmed\naccepted\ncompleted\nrejected\ncancelled\non-hold"
+  },
+  {
+   "fieldname": "prescription_link",
+   "fieldtype": "Data",
+   "label": "Prescription Link",
+   "description": "Our own permanent File URL (downloaded from Shukhee's short-lived presigned link once completed)."
+  },
+  {
+   "fieldname": "invoice_link",
+   "fieldtype": "Data",
+   "label": "Invoice Link",
+   "description": "Our own permanent File URL (downloaded from Shukhee's short-lived presigned link once completed)."
   }
  ],
  "links": [],
