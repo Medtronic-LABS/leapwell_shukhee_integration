@@ -1,0 +1,77 @@
+{
+ "actions": [],
+ "autoname": "autoincrement",
+ "creation": "2026-09-01 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "shukhee_user",
+  "uhis_user",
+  "patient_id",
+  "contact_number",
+  "request_id",
+  "call_url",
+  "status"
+ ],
+ "fields": [
+  {
+   "fieldname": "shukhee_user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Shukhee User",
+   "options": "UHIS Shukhee User"
+  },
+  {
+   "fieldname": "uhis_user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "UHIS User",
+   "options": "Provider"
+  },
+  {
+   "fieldname": "patient_id",
+   "fieldtype": "Data",
+   "label": "Patient ID"
+  },
+  {
+   "fieldname": "contact_number",
+   "fieldtype": "Data",
+   "label": "Contact Number"
+  },
+  {
+   "fieldname": "request_id",
+   "fieldtype": "Data",
+   "label": "Request ID"
+  },
+  {
+   "fieldname": "call_url",
+   "fieldtype": "Data",
+   "label": "Call URL"
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Initiated\nRinging\nAnswered\nCompleted\nFailed\nNo Answer"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-01 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Shukhee Integration",
+ "name": "Call Logs",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager"
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

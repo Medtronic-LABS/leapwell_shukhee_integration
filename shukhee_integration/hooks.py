@@ -1,23 +1,24 @@
-app_name = "sukhee_integration"
-app_title = "Sukhee Integration"
+app_name = "shukhee_integration"
+app_title = "Shukhee Integration"
 app_publisher = "Medtronic Labs"
-app_description = "UHIS integration with the external Sukhee calling/telephony system -- credential mapping, settings, and call audit log."
+app_description = "UHIS integration with the external Shukhee calling/telephony system -- credential mapping, settings, and call audit log."
 app_email = "admin@medtroniclabs.org"
 app_license = "gpl-3.0"
 
 # Apps
 # ------------------
 
-# required_apps = []
+# Doctypes here Link to Provider (UHIS Shukhee User.uhis, Call Logs.uhis_user).
+required_apps = ["uhis_next_core"]
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
 # 	{
-# 		"name": "sukhee_integration",
-# 		"logo": "/assets/sukhee_integration/logo.png",
-# 		"title": "Sukhee Integration",
-# 		"route": "/sukhee_integration",
-# 		"has_permission": "sukhee_integration.api.permission.has_app_permission"
+# 		"name": "shukhee_integration",
+# 		"logo": "/assets/shukhee_integration/logo.png",
+# 		"title": "Shukhee Integration",
+# 		"route": "/shukhee_integration",
+# 		"has_permission": "shukhee_integration.api.permission.has_app_permission"
 # 	}
 # ]
 
@@ -25,15 +26,15 @@ app_license = "gpl-3.0"
 # ------------------
 
 # include js, css files in header of desk.html
-# app_include_css = "/assets/sukhee_integration/css/sukhee_integration.css"
-# app_include_js = "/assets/sukhee_integration/js/sukhee_integration.js"
+# app_include_css = "/assets/shukhee_integration/css/shukhee_integration.css"
+# app_include_js = "/assets/shukhee_integration/js/shukhee_integration.js"
 
 # include js, css files in header of web template
-# web_include_css = "/assets/sukhee_integration/css/sukhee_integration.css"
-# web_include_js = "/assets/sukhee_integration/js/sukhee_integration.js"
+# web_include_css = "/assets/shukhee_integration/css/shukhee_integration.css"
+# web_include_js = "/assets/shukhee_integration/js/shukhee_integration.js"
 
 # include custom scss in every website theme (without file extension ".scss")
-# website_theme_scss = "sukhee_integration/public/scss/website"
+# website_theme_scss = "shukhee_integration/public/scss/website"
 
 # include js, css files in header of web form
 # webform_include_js = {"doctype": "public/js/doctype.js"}
@@ -51,7 +52,7 @@ app_license = "gpl-3.0"
 # Svg Icons
 # ------------------
 # include app icons in desk
-# app_include_icons = "sukhee_integration/public/icons.svg"
+# app_include_icons = "shukhee_integration/public/icons.svg"
 
 # Home Pages
 # ----------
@@ -78,49 +79,49 @@ app_license = "gpl-3.0"
 
 # add methods and filters to jinja environment
 # jinja = {
-# 	"methods": "sukhee_integration.utils.jinja_methods",
-# 	"filters": "sukhee_integration.utils.jinja_filters"
+# 	"methods": "shukhee_integration.utils.jinja_methods",
+# 	"filters": "shukhee_integration.utils.jinja_filters"
 # }
 
 # Installation
 # ------------
 
-# before_install = "sukhee_integration.install.before_install"
-# after_install = "sukhee_integration.install.after_install"
+# before_install = "shukhee_integration.install.before_install"
+# after_install = "shukhee_integration.install.after_install"
 
 # Uninstallation
 # ------------
 
-# before_uninstall = "sukhee_integration.uninstall.before_uninstall"
-# after_uninstall = "sukhee_integration.uninstall.after_uninstall"
+# before_uninstall = "shukhee_integration.uninstall.before_uninstall"
+# after_uninstall = "shukhee_integration.uninstall.after_uninstall"
 
 # Integration Setup
 # ------------------
 # To set up dependencies/integrations with other apps
 # Name of the app being installed is passed as an argument
 
-# before_app_install = "sukhee_integration.utils.before_app_install"
-# after_app_install = "sukhee_integration.utils.after_app_install"
+# before_app_install = "shukhee_integration.utils.before_app_install"
+# after_app_install = "shukhee_integration.utils.after_app_install"
 
 # Integration Cleanup
 # -------------------
 # To clean up dependencies/integrations with other apps
 # Name of the app being uninstalled is passed as an argument
 
-# before_app_uninstall = "sukhee_integration.utils.before_app_uninstall"
-# after_app_uninstall = "sukhee_integration.utils.after_app_uninstall"
+# before_app_uninstall = "shukhee_integration.utils.before_app_uninstall"
+# after_app_uninstall = "shukhee_integration.utils.after_app_uninstall"
 
 # Build
 # ------------------
 # To hook into the build process
 
-# after_build = "sukhee_integration.build.after_build"
+# after_build = "shukhee_integration.build.after_build"
 
 # Desk Notifications
 # ------------------
 # See frappe.core.notifications.get_notification_config
 
-# notification_config = "sukhee_integration.notifications.get_notification_config"
+# notification_config = "shukhee_integration.notifications.get_notification_config"
 
 # Permissions
 # -----------
@@ -151,47 +152,47 @@ app_license = "gpl-3.0"
 
 # scheduler_events = {
 # 	"all": [
-# 		"sukhee_integration.tasks.all"
+# 		"shukhee_integration.tasks.all"
 # 	],
 # 	"daily": [
-# 		"sukhee_integration.tasks.daily"
+# 		"shukhee_integration.tasks.daily"
 # 	],
 # 	"hourly": [
-# 		"sukhee_integration.tasks.hourly"
+# 		"shukhee_integration.tasks.hourly"
 # 	],
 # 	"weekly": [
-# 		"sukhee_integration.tasks.weekly"
+# 		"shukhee_integration.tasks.weekly"
 # 	],
 # 	"monthly": [
-# 		"sukhee_integration.tasks.monthly"
+# 		"shukhee_integration.tasks.monthly"
 # 	],
 # }
 
 # Testing
 # -------
 
-# before_tests = "sukhee_integration.install.before_tests"
+# before_tests = "shukhee_integration.install.before_tests"
 
 # Extend DocType Class
 # ------------------------------
 #
 # Specify custom mixins to extend the standard doctype controller.
 # extend_doctype_class = {
-# 	"Task": "sukhee_integration.custom.task.CustomTaskMixin"
+# 	"Task": "shukhee_integration.custom.task.CustomTaskMixin"
 # }
 
 # Overriding Methods
 # ------------------------------
 #
 # override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "sukhee_integration.event.get_events"
+# 	"frappe.desk.doctype.event.event.get_events": "shukhee_integration.event.get_events"
 # }
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,
 # along with any modifications made in other Frappe apps
 # override_doctype_dashboards = {
-# 	"Task": "sukhee_integration.task.get_dashboard_data"
+# 	"Task": "shukhee_integration.task.get_dashboard_data"
 # }
 
 # exempt linked doctypes from being automatically cancelled
@@ -205,13 +206,13 @@ app_license = "gpl-3.0"
 
 # Request Events
 # ----------------
-# before_request = ["sukhee_integration.utils.before_request"]
-# after_request = ["sukhee_integration.utils.after_request"]
+# before_request = ["shukhee_integration.utils.before_request"]
+# after_request = ["shukhee_integration.utils.after_request"]
 
 # Job Events
 # ----------
-# before_job = ["sukhee_integration.utils.before_job"]
-# after_job = ["sukhee_integration.utils.after_job"]
+# before_job = ["shukhee_integration.utils.before_job"]
+# after_job = ["shukhee_integration.utils.after_job"]
 
 # User Data Protection
 # --------------------
@@ -241,7 +242,7 @@ app_license = "gpl-3.0"
 # --------------------------------
 
 # auth_hooks = [
-# 	"sukhee_integration.auth.validate"
+# 	"shukhee_integration.auth.validate"
 # ]
 
 # Automatically update python controller files with type annotations for this app.

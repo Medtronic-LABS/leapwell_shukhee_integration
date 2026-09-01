@@ -1,9 +1,9 @@
 [project]
-name = "sukhee_integration"
+name = "shukhee_integration"
 authors = [
     { name = "Medtronic Labs", email = "admin@medtroniclabs.org"}
 ]
-description = "UHIS integration with the external Sukhee calling/telephony system -- credential mapping, settings, and call audit log."
+description = "UHIS integration with the external Shukhee calling/telephony system -- credential mapping, settings, and call audit log."
 requires-python = ">=3.14"
 readme = "README.md"
 dynamic = ["version"]

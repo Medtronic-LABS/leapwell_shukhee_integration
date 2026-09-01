@@ -1,6 +1,6 @@
-### Sukhee Integration
+### Shukhee Integration
 
-UHIS integration with the external Sukhee calling/telephony system -- credential mapping, settings, and call audit log.
+UHIS integration with the external Shukhee calling/telephony system -- credential mapping, settings, and call audit log.
 
 ### Installation
 
@@ -9,7 +9,7 @@ You can install this app using the [bench](https://github.com/frappe/bench) CLI:
 ```bash
 cd $PATH_TO_YOUR_BENCH
 bench get-app $URL_OF_THIS_REPO --branch version-16
-bench install-app sukhee_integration
+bench install-app shukhee_integration
 ```
 
 ### Contributing
@@ -17,7 +17,7 @@ bench install-app sukhee_integration
 This app uses `pre-commit` for code formatting and linting. Please [install pre-commit](https://pre-commit.com/#installation) and enable it for this repository:
 
 ```bash
-cd apps/sukhee_integration
+cd apps/shukhee_integration
 pre-commit install
 ```
 
