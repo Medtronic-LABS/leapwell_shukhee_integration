@@ -64,7 +64,7 @@
                   "key": "contact_number",
                   "value": "{{contact_number}}",
                   "type": "text",
-                  "description": "Must match an existing Patient.phone on this site -- the Shukhee-side patient is resolved/created from that Patient's name/dob/gender, never fabricated."
+                  "description": "Checked against Shukhee's own patient list first, then this platform's Patient.phone. If neither has a match, patient_name/patient_dob/patient_gender below are required to create one on Shukhee. Note: Shukhee's Create Patient only accepts Bangladeshi-format mobile numbers."
                 },
                 {
                   "key": "reason",
@@ -82,6 +82,24 @@
                   "value": "{{encounter_id}}",
                   "type": "text",
                   "description": "Optional. Plain identifier from the app, carried through with no FK validation, same as patient_id."
+                },
+                {
+                  "key": "patient_name",
+                  "value": "{{patient_name}}",
+                  "type": "text",
+                  "description": "Optional -- only used if contact_number isn't already a known Patient or Shukhee patient. Required (with patient_dob/patient_gender) to create a new Shukhee patient in that case."
+                },
+                {
+                  "key": "patient_dob",
+                  "value": "{{patient_dob}}",
+                  "type": "text",
+                  "description": "Optional, YYYY-MM-DD. See patient_name."
+                },
+                {
+                  "key": "patient_gender",
+                  "value": "{{patient_gender}}",
+                  "type": "text",
+                  "description": "Optional: Male/Female/Others. See patient_name."
                 },
                 {
                   "key": "medias",

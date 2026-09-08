@@ -51,12 +51,17 @@ def _current_shukhee_user(provider_name):
 def start_consultation():
 	"""Books an instant call with Shukhee and returns the video-call join URL. Multipart
 	form fields: contact_number, reason, requested_speciality, encounter_id (optional),
-	medias (files, optional)."""
+	patient_name/patient_dob/patient_gender (optional -- only needed to create a new
+	Shukhee patient when neither Shukhee nor this platform's own Patient doctype already
+	has a record for contact_number), medias (files, optional)."""
 	env = frappe.local.form_dict
 	contact_number = env.get("contact_number")
 	reason = env.get("reason")
 	requested_speciality = env.get("requested_speciality")
 	encounter_id = env.get("encounter_id")
+	patient_name = env.get("patient_name")
+	patient_dob = env.get("patient_dob")
+	patient_gender = env.get("patient_gender")
 
 	if not contact_number or not reason or not requested_speciality:
 		frappe.throw(
@@ -67,7 +72,9 @@ def start_consultation():
 	shukhee_user_doc = _current_shukhee_user(provider_name)
 	token = shukhee_client.get_valid_token(shukhee_user_doc)
 
-	shukhee_patient_id = shukhee_client.find_or_create_shukhee_patient(token, contact_number)
+	shukhee_patient_id, patient_details = shukhee_client.find_or_create_shukhee_patient(
+		token, contact_number, patient_name, patient_dob, patient_gender
+	)
 
 	media_files = frappe.request.files.getlist("medias") if frappe.request.files else []
 	medical_document_ids = shukhee_client.upload_medias(token, shukhee_patient_id, media_files)
@@ -79,6 +86,7 @@ def start_consultation():
 	transaction_id = shukhee_client.book_instant_call(
 		token,
 		shukhee_patient_id=shukhee_patient_id,
+		patient_details=patient_details,
 		contact_number=contact_number,
 		reason=reason,
 		speciality_id=speciality_id,

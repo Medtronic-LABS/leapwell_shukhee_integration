@@ -54,6 +54,19 @@ def _request(method, url, **kwargs):
 		resp = requests.request(method, url, timeout=_REQUEST_TIMEOUT_S, **kwargs)
 		resp.raise_for_status()
 		return resp.json()
+	except requests.HTTPError as e:
+		# Surface Shukhee's own validation message (e.g. "reason" field name,
+		# missing/invalid param) instead of just the bare status code -- this
+		# is the actual actionable detail for both logs and the end user.
+		detail = None
+		try:
+			detail = e.response.json()
+		except Exception:
+			detail = e.response.text[:500] if e.response is not None else None
+		frappe.log_error(
+			frappe.get_traceback(), f"Shukhee API call failed: {method} {url} -- {detail}"
+		)
+		frappe.throw(_("Shukhee API call failed: {0} -- {1}").format(str(e), detail), frappe.ValidationError)
 	except requests.RequestException as e:
 		frappe.log_error(frappe.get_traceback(), f"Shukhee API call failed: {method} {url}")
 		frappe.throw(_("Shukhee API call failed: {0}").format(str(e)), frappe.ValidationError)
@@ -117,6 +130,20 @@ def _auth_headers(token):
 	return {"Authorization": f"Bearer {token}"}
 
 
+def _extract_list(data):
+	"""Shukhee's list endpoints aren't consistent about whether `data` is the
+	array directly (confirmed for /ssk/patient-list: {totalItems, data: [...],
+	page, size, hasNext}, no `success` key) or a wrapper object with a nested
+	`data` array (confirmed for /patient/emergency-request-specialities:
+	{success, data: {data: [...]}}). Handle both rather than guess per call site."""
+	inner = data.get("data")
+	if isinstance(inner, list):
+		return inner
+	if isinstance(inner, dict):
+		return inner.get("data") or []
+	return []
+
+
 # ── specialities ─────────────────────────────────────────────────────────────
 
 
@@ -128,7 +155,7 @@ def list_specialities(token):
 		params={"page": 0, "size": 20},
 		headers=_auth_headers(token),
 	)
-	return (data.get("data") or {}).get("data") or []
+	return _extract_list(data)
 
 
 def resolve_speciality_id(token, requested_speciality):
@@ -167,41 +194,68 @@ def _find_uhis_patient(contact_number):
 	)
 
 
-def find_or_create_shukhee_patient(token, contact_number):
-	"""Resolves our own Patient by phone (throws if not found -- never fabricates
-	dob/gender to send to Shukhee), then finds or creates the corresponding Shukhee-side
-	patient record. Returns the Shukhee patient id."""
-	uhis_patient = _find_uhis_patient(contact_number)
-	if not uhis_patient:
-		frappe.throw(
-			_("No Patient record found for contact number {0}.").format(contact_number),
-			frappe.DoesNotExistError,
-		)
+def find_or_create_shukhee_patient(
+	token, contact_number, patient_name=None, patient_dob=None, patient_gender=None
+):
+	"""Finds the Shukhee-side patient for this contact number, creating one if needed.
+	Returns (shukhee_patient_id, patient_details) -- Book Instant Call requires
+	`patientDetails` in the payload even when `patientId` also references an existing
+	patient ("Field 'patientDetails' doesn't have a default value" if omitted), so
+	callers need both, not just the id.
 
+	Checks Shukhee's own patient list first -- if already registered there, patient_details
+	is built from that record directly, no local data needed. Only when Shukhee doesn't
+	already have this patient does creating one require real name/dob/gender from
+	somewhere: this platform's own Patient doctype (matched by phone) if one exists, else
+	the explicit patient_name/patient_dob/patient_gender args (the caller's own patient
+	context -- e.g. from a household visit not yet linked to a Patient record here).
+	Never fabricates demographic data -- throws a clear error if neither source has it,
+	rather than sending Shukhee guessed/placeholder values for a real patient."""
 	existing = _request(
 		"GET",
 		f"{_api_base()}/ssk/patient-list",
 		params={"page": 0, "size": 20, "search": contact_number},
 		headers=_auth_headers(token),
 	)
-	found = ((existing.get("data") or {}).get("data")) or []
+	found = _extract_list(existing)
 	if found:
-		return found[0].get("id") or found[0].get("patientId")
+		record = found[0]
+		patient_id = record.get("id") or record.get("patientId")
+		patient_details = {
+			"fullName": record.get("name") or record.get("fullName"),
+			"mobile": contact_number,
+			"dob": (record.get("dob") or "")[:10] or None,
+			"gender": _map_gender(record.get("gender")),
+		}
+		return patient_id, patient_details
+
+	uhis_patient = _find_uhis_patient(contact_number)
+	if uhis_patient:
+		name = uhis_patient.full_name
+		dob = str(uhis_patient.dob) if uhis_patient.dob else None
+		gender = _map_gender(uhis_patient.gender)
+	elif patient_name and patient_dob and patient_gender:
+		name, dob, gender = patient_name, patient_dob, _map_gender(patient_gender)
+	else:
+		frappe.throw(
+			_(
+				"No Patient record found for contact number {0}, and patient_name/patient_dob/"
+				"patient_gender were not provided to create one on Shukhee."
+			).format(contact_number),
+			frappe.DoesNotExistError,
+		)
+
+	patient_details = {"fullName": name, "mobile": contact_number, "dob": dob, "gender": gender}
 
 	created = _request(
 		"POST",
 		f"{_api_base()}/v2/patient/person-patient-create",
-		json={
-			"name": uhis_patient.full_name,
-			"mobile": contact_number,
-			"dob": str(uhis_patient.dob) if uhis_patient.dob else None,
-			"gender": _map_gender(uhis_patient.gender),
-		},
+		json={"name": name, "mobile": contact_number, "dob": dob, "gender": gender},
 		headers=_auth_headers(token),
 	)
 	patient_id = (created.get("data") or {}).get("id") or (created.get("data") or {}).get("patientId")
 	if patient_id:
-		return patient_id
+		return patient_id, patient_details
 
 	# Sandbox docs note Create Patient's example response doesn't reliably include a top-level
 	# id -- fall back to searching again, same recovery path the collection itself documents.
@@ -211,9 +265,10 @@ def find_or_create_shukhee_patient(token, contact_number):
 		params={"page": 0, "size": 20, "search": contact_number},
 		headers=_auth_headers(token),
 	)
-	relist_found = ((relist.get("data") or {}).get("data")) or []
+	relist_found = _extract_list(relist)
 	if relist_found:
-		return relist_found[0].get("id") or relist_found[0].get("patientId")
+		patient_id = relist_found[0].get("id") or relist_found[0].get("patientId")
+		return patient_id, patient_details
 
 	frappe.throw(
 		_("Could not resolve a Shukhee patient id for contact number {0}.").format(contact_number),
@@ -237,7 +292,8 @@ def upload_medias(token, shukhee_patient_id, files):
 		files=multipart_files,
 		headers=_auth_headers(token),
 	)
-	uploaded = (data.get("data") or {}).get("files") or []
+	uploaded = data.get("data", {}).get("files") if isinstance(data.get("data"), dict) else None
+	uploaded = uploaded or []
 	return [f["id"] for f in uploaded if f.get("id")]
 
 
@@ -248,6 +304,7 @@ def book_instant_call(
 	token,
 	*,
 	shukhee_patient_id,
+	patient_details,
 	contact_number,
 	reason,
 	speciality_id,
@@ -256,7 +313,12 @@ def book_instant_call(
 	medical_document_ids=None,
 ):
 	"""POST /ssk/emergency-request/v3 -- books the instant call. Returns transaction_id;
-	the sandbox response does NOT include the new request's id -- see resolve_request_id."""
+	the sandbox response does NOT include the new request's id -- see resolve_request_id.
+
+	`patientDetails` is required by the live API even when `patientId` already references
+	an existing patient -- confirmed against the real sandbox: omitting it fails with
+	"Field 'patientDetails' doesn't have a default value" (422), contradicting the
+	Postman collection's own description, which implied patientId alone was sufficient."""
 	form = {
 		"channel": "sskPortal",
 		"call_type": call_type,
@@ -264,6 +326,7 @@ def book_instant_call(
 		"reason": reason,
 		"specialityId": speciality_id,
 		"requested_speciality": requested_speciality,
+		"patientDetails": frappe.as_json(patient_details),
 		"patientId": shukhee_patient_id,
 		"contact": contact_number,
 		"serviceSlug": "instant-call",
@@ -284,7 +347,13 @@ def resolve_request_id(token, contact_number, attempts=3, delay_s=1):
 	"""Book Instant Call doesn't return the new request's id -- resolve it by listing
 	emergency requests and matching the newest entry for this contact number. Known
 	fragility: no guaranteed unique match key in the sandbox docs; bounded retry since the
-	record may not be listable immediately after booking."""
+	record may not be listable immediately after booking.
+
+	`/ssk/all-emergency-request` returns results oldest-first (confirmed against the live
+	sandbox: ascending createdAt) -- for a contact number with any request history,
+	`found[0]` is the *first ever* request, not the newest, and for a since-completed old
+	request that silently resolves every later booking back to a dead call. Must explicitly
+	pick the max by createdAt rather than trust list order."""
 	last_digits = contact_number[-10:] if contact_number else contact_number
 	for attempt in range(attempts):
 		data = _request(
@@ -293,9 +362,10 @@ def resolve_request_id(token, contact_number, attempts=3, delay_s=1):
 			params={"page": 0, "size": 10, "search": last_digits},
 			headers=_auth_headers(token),
 		)
-		found = ((data.get("data") or {}).get("data")) or []
+		found = _extract_list(data)
 		if found:
-			return found[0]["id"]
+			newest = max(found, key=lambda r: r.get("createdAt") or "")
+			return newest["id"]
 		if attempt < attempts - 1:
 			time.sleep(delay_s)
 
