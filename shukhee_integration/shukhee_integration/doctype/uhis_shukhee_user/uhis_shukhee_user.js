@@ -179,12 +179,15 @@ window.shukhee_call_flow = {
 	},
 
 	_show_video_call(flow, frm) {
-		// Embedded per explicit user choice, despite Shukhee's own integration
-		// contract stating this URL must be a top-level WebView navigation and
-		// never an iframe -- their server may set X-Frame-Options/CSP that
-		// blocks this outright (shows as a blank frame or a browser refusal
-		// message, not a JS error we can catch). A same-tab window.open()
-		// fallback link is included below in case the frame fails to load.
+		// Kept embedded per explicit user choice, despite Shukhee's own integration
+		// contract stating this URL must be a top-level WebView navigation and never an
+		// iframe. Confirmed against the live sandbox why that contract exists: Shukhee's
+		// video-call app (Next.js) resolves the call session via a cookie set on first
+		// load, which is a third-party cookie inside a cross-origin iframe -- browsers
+		// refuse to set/send it, so the join fails with SESSION_NOT_FOUND even though the
+		// link is perfectly valid (the identical link opened top-level works every time).
+		// The "Open in a new tab instead" link below is the reliable escape hatch, not a
+		// cosmetic extra -- it's a real top-level navigation and always works.
 		flow.set_title(__("Video Call"));
 		flow.$wrapper.find(".modal-dialog").removeClass("modal-sm").addClass("modal-xl");
 		flow.modal_body.html(`

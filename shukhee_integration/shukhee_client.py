@@ -49,12 +49,24 @@ def _decode_jwt_exp_ms(token):
 		return None
 
 
-def _request(method, url, **kwargs):
+class ShukheeAuthExpired(Exception):
+	"""Internal signal only: Shukhee rejected a request with 401 even though our
+	cached token looked unexpired (clock skew, server-side revocation, etc.).
+	Raised by _request only when explicitly asked to (raise_on_401=True) --
+	login()/refresh() never opt in, so a real bad-credentials 401 from those
+	still surfaces as the normal frappe.throw below, not this signal. Caught
+	only by _authed_request, which forces a fresh login and retries once;
+	never expected to escape this module."""
+
+
+def _request(method, url, *, raise_on_401=False, **kwargs):
 	try:
 		resp = requests.request(method, url, timeout=_REQUEST_TIMEOUT_S, **kwargs)
 		resp.raise_for_status()
 		return resp.json()
 	except requests.HTTPError as e:
+		if raise_on_401 and e.response is not None and e.response.status_code == 401:
+			raise ShukheeAuthExpired() from e
 		# Surface Shukhee's own validation message (e.g. "reason" field name,
 		# missing/invalid param) instead of just the bare status code -- this
 		# is the actual actionable detail for both logs and the end user.
@@ -130,6 +142,24 @@ def _auth_headers(token):
 	return {"Authorization": f"Bearer {token}"}
 
 
+def _authed_request(method, url, shukhee_user_doc, **kwargs):
+	"""The login -> cache -> reuse -> relogin-on-401 contract for every
+	authenticated Shukhee call. Uses get_valid_token's cache first (cheap, no
+	network round trip when unexpired); if Shukhee itself rejects that token
+	live with a 401 -- meaning our cache thought it was valid but Shukhee
+	disagrees -- invalidates the cache, forces a fresh login, and retries the
+	same request exactly once. A 401 on that retry falls through to the
+	normal frappe.throw(ValidationError) path with full detail rather than
+	looping."""
+	token = get_valid_token(shukhee_user_doc)
+	try:
+		return _request(method, url, headers=_auth_headers(token), raise_on_401=True, **kwargs)
+	except ShukheeAuthExpired:
+		frappe.cache().delete_value(f"shukhee_token:{shukhee_user_doc.name}")
+		token = get_valid_token(shukhee_user_doc)
+		return _request(method, url, headers=_auth_headers(token), **kwargs)
+
+
 def _extract_list(data):
 	"""Shukhee's list endpoints aren't consistent about whether `data` is the
 	array directly (confirmed for /ssk/patient-list: {totalItems, data: [...],
@@ -147,22 +177,22 @@ def _extract_list(data):
 # ── specialities ─────────────────────────────────────────────────────────────
 
 
-def list_specialities(token):
+def list_specialities(shukhee_user_doc):
 	"""GET /patient/emergency-request-specialities -- selectable specialities for booking."""
-	data = _request(
+	data = _authed_request(
 		"GET",
 		f"{_api_base()}/patient/emergency-request-specialities",
+		shukhee_user_doc,
 		params={"page": 0, "size": 20},
-		headers=_auth_headers(token),
 	)
 	return _extract_list(data)
 
 
-def resolve_speciality_id(token, requested_speciality):
+def resolve_speciality_id(shukhee_user_doc, requested_speciality):
 	"""Matches requested_speciality (free text from the app) against the real specialities
 	list by title (case-insensitive); falls back to the first entry if no match, mirroring
 	the Postman collection's own Tests-script default behavior."""
-	specialities = list_specialities(token)
+	specialities = list_specialities(shukhee_user_doc)
 	if not specialities:
 		frappe.throw(_("Shukhee returned no available specialities."), frappe.ValidationError)
 
@@ -195,7 +225,7 @@ def _find_uhis_patient(contact_number):
 
 
 def find_or_create_shukhee_patient(
-	token, contact_number, patient_name=None, patient_dob=None, patient_gender=None
+	shukhee_user_doc, contact_number, patient_name=None, patient_dob=None, patient_gender=None
 ):
 	"""Finds the Shukhee-side patient for this contact number, creating one if needed.
 	Returns (shukhee_patient_id, patient_details) -- Book Instant Call requires
@@ -211,11 +241,11 @@ def find_or_create_shukhee_patient(
 	context -- e.g. from a household visit not yet linked to a Patient record here).
 	Never fabricates demographic data -- throws a clear error if neither source has it,
 	rather than sending Shukhee guessed/placeholder values for a real patient."""
-	existing = _request(
+	existing = _authed_request(
 		"GET",
 		f"{_api_base()}/ssk/patient-list",
+		shukhee_user_doc,
 		params={"page": 0, "size": 20, "search": contact_number},
-		headers=_auth_headers(token),
 	)
 	found = _extract_list(existing)
 	if found:
@@ -247,11 +277,11 @@ def find_or_create_shukhee_patient(
 
 	patient_details = {"fullName": name, "mobile": contact_number, "dob": dob, "gender": gender}
 
-	created = _request(
+	created = _authed_request(
 		"POST",
 		f"{_api_base()}/v2/patient/person-patient-create",
+		shukhee_user_doc,
 		json={"name": name, "mobile": contact_number, "dob": dob, "gender": gender},
-		headers=_auth_headers(token),
 	)
 	patient_id = (created.get("data") or {}).get("id") or (created.get("data") or {}).get("patientId")
 	if patient_id:
@@ -259,11 +289,11 @@ def find_or_create_shukhee_patient(
 
 	# Sandbox docs note Create Patient's example response doesn't reliably include a top-level
 	# id -- fall back to searching again, same recovery path the collection itself documents.
-	relist = _request(
+	relist = _authed_request(
 		"GET",
 		f"{_api_base()}/ssk/patient-list",
+		shukhee_user_doc,
 		params={"page": 0, "size": 20, "search": contact_number},
-		headers=_auth_headers(token),
 	)
 	relist_found = _extract_list(relist)
 	if relist_found:
@@ -279,18 +309,18 @@ def find_or_create_shukhee_patient(
 # ── medical documents ────────────────────────────────────────────────────────
 
 
-def upload_medias(token, shukhee_patient_id, files):
+def upload_medias(shukhee_user_doc, shukhee_patient_id, files):
 	"""One multipart POST /ssk/medical-document/upload call with all files as `attachments`.
 	`files` is a list of werkzeug FileStorage objects. Returns a list of Shukhee file ids."""
 	if not files:
 		return []
 	multipart_files = [("attachments", (f.filename, f.stream, f.mimetype)) for f in files]
-	data = _request(
+	data = _authed_request(
 		"POST",
 		f"{_api_base()}/ssk/medical-document/upload",
+		shukhee_user_doc,
 		data={"type": "other", "patientId": shukhee_patient_id},
 		files=multipart_files,
-		headers=_auth_headers(token),
 	)
 	uploaded = data.get("data", {}).get("files") if isinstance(data.get("data"), dict) else None
 	uploaded = uploaded or []
@@ -301,7 +331,7 @@ def upload_medias(token, shukhee_patient_id, files):
 
 
 def book_instant_call(
-	token,
+	shukhee_user_doc,
 	*,
 	shukhee_patient_id,
 	patient_details,
@@ -335,34 +365,47 @@ def book_instant_call(
 	if medical_document_ids:
 		form["medicalDocumentIds"] = ",".join(str(i) for i in medical_document_ids)
 
-	data = _request(
-		"POST", f"{_api_base()}/ssk/emergency-request/v3", data=form, headers=_auth_headers(token)
+	data = _authed_request(
+		"POST", f"{_api_base()}/ssk/emergency-request/v3", shukhee_user_doc, data=form
 	)
 	if not data.get("success"):
 		frappe.throw(_("Booking the Shukhee instant call failed."), frappe.ValidationError)
 	return (data.get("data") or {}).get("transactionId")
 
 
-def resolve_request_id(token, contact_number, attempts=3, delay_s=1):
+def resolve_request_id(shukhee_user_doc, contact_number, attempts=3, delay_s=1):
 	"""Book Instant Call doesn't return the new request's id -- resolve it by listing
 	emergency requests and matching the newest entry for this contact number. Known
 	fragility: no guaranteed unique match key in the sandbox docs; bounded retry since the
 	record may not be listable immediately after booking.
 
 	`/ssk/all-emergency-request` returns results oldest-first (confirmed against the live
-	sandbox: ascending createdAt) -- for a contact number with any request history,
-	`found[0]` is the *first ever* request, not the newest, and for a since-completed old
-	request that silently resolves every later booking back to a dead call. Must explicitly
-	pick the max by createdAt rather than trust list order."""
+	sandbox: ascending createdAt) with no way to request reverse order, and paginates --
+	for a contact number with more history than one page, the newest request lands on the
+	*last* page, not page 0 (confirmed: totalItems=15/size=10 put the true newest request on
+	page 1, invisible to a page-0-only fetch no matter how that page is sorted). So: read
+	`pagination.totalItems` off page 0, fetch the actual last page, then pick the max by
+	createdAt from there -- never trust page 0 alone once a number has any real history."""
 	last_digits = contact_number[-10:] if contact_number else contact_number
+	size = 10
 	for attempt in range(attempts):
-		data = _request(
+		data = _authed_request(
 			"GET",
 			f"{_api_base()}/ssk/all-emergency-request",
-			params={"page": 0, "size": 10, "search": last_digits},
-			headers=_auth_headers(token),
+			shukhee_user_doc,
+			params={"page": 0, "size": size, "search": last_digits},
 		)
 		found = _extract_list(data)
+		total_items = ((data.get("data") or {}).get("pagination") or {}).get("totalItems") or len(found)
+		last_page = max((total_items - 1) // size, 0)
+		if last_page > 0:
+			data = _authed_request(
+				"GET",
+				f"{_api_base()}/ssk/all-emergency-request",
+				shukhee_user_doc,
+				params={"page": last_page, "size": size, "search": last_digits},
+			)
+			found = _extract_list(data) or found
 		if found:
 			newest = max(found, key=lambda r: r.get("createdAt") or "")
 			return newest["id"]
@@ -375,10 +418,10 @@ def resolve_request_id(token, contact_number, attempts=3, delay_s=1):
 	)
 
 
-def get_emergency_request(token, request_id):
+def get_emergency_request(shukhee_user_doc, request_id):
 	"""GET /patient/emergency-request/:id -- status + appointment.prescriptionLink/invoiceLink."""
-	data = _request(
-		"GET", f"{_api_base()}/patient/emergency-request/{request_id}", headers=_auth_headers(token)
+	data = _authed_request(
+		"GET", f"{_api_base()}/patient/emergency-request/{request_id}", shukhee_user_doc
 	)
 	return data.get("data") or {}
 
