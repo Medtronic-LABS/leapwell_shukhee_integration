@@ -6,7 +6,7 @@ Source of truth: /Users/amresh/labs/UHIS/leapfrog-setup/sukhee-integration/postm
 the SSK Third-Party Video Call Integration doc, and the Teleconsultation Integration
 Workflow doc (LEAPWELL <-> Shukhee).
 
-Unlike uhis_next_core/fhir/push.py (fire-and-forget background push, log-and-continue on
+Unlike spice_next_core/fhir/push.py (fire-and-forget background push, log-and-continue on
 failure), every call here is inside a synchronous, user-facing request -- the caller is
 waiting on the response -- so failures are raised via frappe.throw rather than swallowed.
 """

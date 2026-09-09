@@ -18,13 +18,13 @@ import frappe
 from frappe import _
 
 from shukhee_integration import shukhee_client
-from uhis_next_core.auth.decorators import current_remote_user_id, whitelist
+from spice_next_core.auth.decorators import current_remote_user_id, whitelist
 
 _TERMINAL_STATUSES = {"completed", "rejected", "cancelled", "on-hold"}
 
 
 def _resolve_env(payload=None):
-	"""Same dual-mode parsing as uhis_next_core.api.sync — accepts either a legacy `payload`
+	"""Same dual-mode parsing as spice_next_core.api.sync — accepts either a legacy `payload`
 	string or the raw JSON body merged into form_dict."""
 	if payload:
 		return frappe.parse_json(payload)
