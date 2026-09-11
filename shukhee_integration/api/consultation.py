@@ -261,7 +261,14 @@ def download_document(payload=None):
 		{"file_url": file_url, "attached_to_doctype": "Call Logs", "attached_to_name": doc.name},
 	)
 
+	content = file_doc.get_content()
+	# File.get_content() is typed bytes | str -- it returns str whenever the raw
+	# bytes happen to decode cleanly (e.g. a small/simple PDF with no binary
+	# stream data yet). base64 needs bytes regardless of which one comes back.
+	if isinstance(content, str):
+		content = content.encode("utf-8")
+
 	return {
 		"filename": file_doc.file_name,
-		"content_base64": base64.b64encode(file_doc.get_content()).decode("ascii"),
+		"content_base64": base64.b64encode(content).decode("ascii"),
 	}
