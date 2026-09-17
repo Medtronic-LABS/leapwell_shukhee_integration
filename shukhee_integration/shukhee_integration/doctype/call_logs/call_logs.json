@@ -5,26 +5,63 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "summary_tab",
+  "summary_html",
+  "details_tab",
+  "participants_section",
   "shukhee_user",
   "uhis_user",
+  "participants_column_break",
   "patient_id",
   "contact_number",
+  "request_section",
   "encounter_id",
   "reason",
+  "request_column_break",
   "speciality_id",
   "requested_speciality",
+  "call_section",
   "call_type",
+  "status",
+  "call_column_break",
   "request_id",
   "transaction_id",
   "call_url",
-  "status",
-  "prescription_link",
-  "invoice_link",
+  "doctor_section",
   "doctor_name",
   "doctor_speciality",
-  "doctor_facility"
+  "doctor_column_break",
+  "doctor_facility",
+  "documents_section",
+  "medias",
+  "medias_gallery",
+  "prescription_section",
+  "prescription_link",
+  "prescription_preview",
+  "prescription_column_break",
+  "invoice_link"
  ],
  "fields": [
+  {
+   "fieldname": "summary_tab",
+   "fieldtype": "Tab Break",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "summary_html",
+   "fieldtype": "HTML",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "details_tab",
+   "fieldtype": "Tab Break",
+   "label": "Details"
+  },
+  {
+   "fieldname": "participants_section",
+   "fieldtype": "Section Break",
+   "label": "Participants"
+  },
   {
    "fieldname": "shukhee_user",
    "fieldtype": "Link",
@@ -40,6 +77,10 @@
    "options": "Provider"
   },
   {
+   "fieldname": "participants_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "patient_id",
    "fieldtype": "Data",
    "label": "Patient ID",
@@ -49,6 +90,11 @@
    "fieldname": "contact_number",
    "fieldtype": "Data",
    "label": "Contact Number"
+  },
+  {
+   "fieldname": "request_section",
+   "fieldtype": "Section Break",
+   "label": "Consultation Request"
   },
   {
    "fieldname": "encounter_id",
@@ -62,6 +108,10 @@
    "label": "Reason"
   },
   {
+   "fieldname": "request_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "speciality_id",
    "fieldtype": "Data",
    "label": "Speciality ID"
@@ -72,11 +122,28 @@
    "label": "Requested Speciality"
   },
   {
+   "fieldname": "call_section",
+   "fieldtype": "Section Break",
+   "label": "Call Details"
+  },
+  {
    "default": "video",
    "fieldname": "call_type",
    "fieldtype": "Select",
    "label": "Call Type",
    "options": "voice\nvideo"
+  },
+  {
+   "default": "pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "pending\nconfirmed\naccepted\ncompleted\nrejected\ncancelled\non-hold"
+  },
+  {
+   "fieldname": "call_column_break",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "request_id",
@@ -95,24 +162,9 @@
    "description": "Includes a live Shukhee access token in the query string -- can exceed Data's 140-char limit."
   },
   {
-   "default": "pending",
-   "fieldname": "status",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "label": "Status",
-   "options": "pending\nconfirmed\naccepted\ncompleted\nrejected\ncancelled\non-hold"
-  },
-  {
-   "fieldname": "prescription_link",
-   "fieldtype": "Data",
-   "label": "Prescription Link",
-   "description": "Our own permanent File URL (downloaded from Shukhee's short-lived presigned link once completed)."
-  },
-  {
-   "fieldname": "invoice_link",
-   "fieldtype": "Data",
-   "label": "Invoice Link",
-   "description": "Our own permanent File URL (downloaded from Shukhee's short-lived presigned link once completed)."
+   "fieldname": "doctor_section",
+   "fieldtype": "Section Break",
+   "label": "Doctor"
   },
   {
    "fieldname": "doctor_name",
@@ -127,10 +179,59 @@
    "description": "From Shukhee's `doctor.specialty.title`."
   },
   {
+   "fieldname": "doctor_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "doctor_facility",
    "fieldtype": "Data",
    "label": "Doctor Facility",
    "description": "From Shukhee's `doctor.working_at` -- a raw facility code (e.g. \"DMC\"), not a formatted name."
+  },
+  {
+   "fieldname": "documents_section",
+   "fieldtype": "Section Break",
+   "label": "Medical Documents"
+  },
+  {
+   "fieldname": "medias",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Medical Documents",
+   "options": "Call Log Media",
+   "description": "Documents the SK photographed/uploaded before booking (if any), each also sent to Shukhee's own /ssk/medical-document/upload with this same type. Hidden -- rendered as a gallery by medias_gallery/call_logs.js instead of the default grid; the data (and this field) still exist and are unaffected."
+  },
+  {
+   "fieldname": "medias_gallery",
+   "fieldtype": "HTML",
+   "label": "Medical Documents"
+  },
+  {
+   "fieldname": "prescription_section",
+   "fieldtype": "Section Break",
+   "label": "Prescription & Invoice"
+  },
+  {
+   "fieldname": "prescription_link",
+   "fieldtype": "Data",
+   "label": "Prescription Link",
+   "description": "Our own permanent File URL (downloaded from Shukhee's short-lived presigned link once completed)."
+  },
+  {
+   "fieldname": "prescription_preview",
+   "fieldtype": "HTML",
+   "label": "Prescription Preview",
+   "depends_on": "eval:doc.prescription_link"
+  },
+  {
+   "fieldname": "prescription_column_break",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "invoice_link",
+   "fieldtype": "Data",
+   "label": "Invoice Link",
+   "description": "Our own permanent File URL (downloaded from Shukhee's short-lived presigned link once completed)."
   }
  ],
  "links": [],

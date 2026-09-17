@@ -1,6 +1,7 @@
 """
 Consultation flow endpoints — video-consultation via the external Shukhee (SSK) system.
 
+  shukhee_integration.api.consultation.get_specialities          populates the booking form's speciality picker
   shukhee_integration.api.consultation.start_consultation        SK taps "Start Consultation"
   shukhee_integration.api.consultation.get_consultation_status    polled by the client
   shukhee_integration.api.consultation.get_prescription           "View Prescription" button
@@ -21,6 +22,7 @@ from shukhee_integration import shukhee_client
 from spice_next_core.auth.decorators import current_remote_user_id, whitelist
 
 _TERMINAL_STATUSES = {"completed", "rejected", "cancelled", "on-hold"}
+_DOCUMENT_TYPES = ("prescription", "lab_report", "other")
 
 
 def _resolve_env(payload=None):
@@ -58,13 +60,39 @@ def _current_shukhee_user(provider_name):
 	return doc
 
 
+@whitelist(methods=["GET", "POST"], remote_auth=True)
+def get_specialities():
+	"""Live, selectable specialities for the booking form's speciality picker --
+	GET /patient/emergency-request-specialities, passed straight through with Shukhee's
+	own field names unchanged (`specialityId`, `title`) so the caller can send `title`
+	back verbatim as `start_consultation`'s `requested_speciality` with no risk of a
+	silent title mismatch falling back to the wrong speciality server-side."""
+	provider_name = _current_provider()
+	shukhee_user_doc = _current_shukhee_user(provider_name)
+	specialities = shukhee_client.list_specialities(shukhee_user_doc)
+	return {
+		"specialities": [
+			{"specialityId": s.get("specialityId"), "title": s.get("title")} for s in specialities
+		]
+	}
+
+
 @whitelist(methods=["POST"], remote_auth=True)
 def start_consultation():
 	"""Books an instant call with Shukhee and returns the video-call join URL. Multipart
 	form fields: contact_number, reason, requested_speciality, encounter_id (optional),
 	patient_name/patient_dob/patient_gender (optional -- only needed to create a new
 	Shukhee patient when neither Shukhee nor this platform's own Patient doctype already
-	has a record for contact_number), medias (files, optional)."""
+	has a record for contact_number), and per-type document groups: `medias_prescription`,
+	`medias_lab_report`, `medias_other` (each a repeated file field, all optional) -- one
+	Shukhee upload call is made per non-empty group (Shukhee's own upload API only accepts
+	one `type` per call), so a single booking can attach a prescription photo AND a lab
+	report photo, each correctly tagged, rather than one type for everything.
+
+	Any uploaded documents are attached locally as permanent Files and recorded one-per-row
+	on the created Call Logs record's `medias` child table (type, file, and the Shukhee-side
+	file id that group's upload returned) -- so there's a local audit trail of what the SK
+	showed the doctor, not just Shukhee's own copy of it."""
 	env = frappe.local.form_dict
 	contact_number = env.get("contact_number")
 	reason = env.get("reason")
@@ -86,8 +114,38 @@ def start_consultation():
 		shukhee_user_doc, contact_number, patient_name, patient_dob, patient_gender
 	)
 
-	media_files = frappe.request.files.getlist("medias") if frappe.request.files else []
-	medical_document_ids = shukhee_client.upload_medias(shukhee_user_doc, shukhee_patient_id, media_files)
+	# Read each file's bytes upfront, grouped by the document type its own field name
+	# carries -- upload_medias's HTTP call consumes a FileStorage's stream, and the same
+	# bytes are needed again afterward to attach a permanent local copy (see below), which
+	# a single-read stream can't provide twice.
+	media_payloads_by_type = {}
+	if frappe.request.files:
+		for doc_type in _DOCUMENT_TYPES:
+			files = frappe.request.files.getlist(f"medias_{doc_type}")
+			if files:
+				media_payloads_by_type[doc_type] = [(f.filename, f.read(), f.mimetype) for f in files]
+
+	medical_document_ids = []
+	# (doc_type, filename, content, shukhee_document_id) per uploaded file, built up across
+	# every group -- attached to the Call Logs record as one child row each, once it exists.
+	attach_queue = []
+	for doc_type, payloads in media_payloads_by_type.items():
+		try:
+			ids = shukhee_client.upload_medias(
+				shukhee_user_doc, shukhee_patient_id, payloads, doc_type=doc_type
+			)
+		except Exception:
+			# Best-effort: attaching supporting documents is optional -- a failed upload
+			# (rejected file, timeout, network blip) for ONE type must never block the
+			# actual doctor call, which is the whole point of this endpoint, nor stop
+			# other document types from still uploading. shukhee_client._request already
+			# writes the underlying failure to the Error Log before raising; this just
+			# stops it from also aborting the booking.
+			ids = []
+		medical_document_ids.extend(ids)
+		for index, (filename, content, _mimetype) in enumerate(payloads):
+			shukhee_document_id = ids[index] if index < len(ids) else None
+			attach_queue.append((doc_type, filename, content, shukhee_document_id))
 
 	speciality_id, matched_speciality = shukhee_client.resolve_speciality_id(
 		shukhee_user_doc, requested_speciality
@@ -132,6 +190,24 @@ def start_consultation():
 	)
 	call_log.insert(ignore_permissions=True)
 	frappe.db.commit()
+
+	# Best-effort, per-file -- same rationale as the upload_medias except block above: one
+	# bad attachment (disk issue, File doctype validation) must never cost the SK the
+	# others, or the booking itself, which already succeeded and is the whole point of this
+	# endpoint. Uses call_log.name (assigned by insert()), so this can only happen after it.
+	for index, (doc_type, filename, content, shukhee_document_id) in enumerate(attach_queue):
+		try:
+			file_url = shukhee_client.attach_uploaded_media(call_log.name, filename, content, index)
+			call_log.append(
+				"medias",
+				{"type": doc_type, "file": file_url, "shukhee_document_id": shukhee_document_id},
+			)
+		except Exception:
+			pass
+
+	if attach_queue:
+		call_log.save(ignore_permissions=True)
+		frappe.db.commit()
 
 	return {"call_log": call_log.name, "call_url": call_url, "status": call_log.status}
 

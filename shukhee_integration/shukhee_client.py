@@ -309,22 +309,44 @@ def find_or_create_shukhee_patient(
 # ── medical documents ────────────────────────────────────────────────────────
 
 
-def upload_medias(shukhee_user_doc, shukhee_patient_id, files):
+def upload_medias(shukhee_user_doc, shukhee_patient_id, media_payloads, doc_type="other"):
 	"""One multipart POST /ssk/medical-document/upload call with all files as `attachments`.
-	`files` is a list of werkzeug FileStorage objects. Returns a list of Shukhee file ids."""
-	if not files:
+	`media_payloads` is a list of `(filename, content_bytes, mimetype)` tuples -- plain bytes
+	rather than werkzeug FileStorage objects, since the caller (consultation.py's
+	start_consultation) reads each file once upfront and reuses the same bytes afterward to
+	attach a permanent local copy via attach_uploaded_media; a FileStorage's stream can only
+	be read once and would already be exhausted by the time that second use happens.
+	`doc_type` forwards to Shukhee's own `type` field -- 'prescription' | 'lab_report' |
+	'other'. Returns a list of Shukhee file ids."""
+	if not media_payloads:
 		return []
-	multipart_files = [("attachments", (f.filename, f.stream, f.mimetype)) for f in files]
+	multipart_files = [
+		("attachments", (filename, content, mimetype)) for filename, content, mimetype in media_payloads
+	]
 	data = _authed_request(
 		"POST",
 		f"{_api_base()}/ssk/medical-document/upload",
 		shukhee_user_doc,
-		data={"type": "other", "patientId": shukhee_patient_id},
+		data={"type": doc_type, "patientId": shukhee_patient_id},
 		files=multipart_files,
 	)
 	uploaded = data.get("data", {}).get("files") if isinstance(data.get("data"), dict) else None
 	uploaded = uploaded or []
 	return [f["id"] for f in uploaded if f.get("id")]
+
+
+def attach_uploaded_media(docname, filename, content, index):
+	"""Attaches one of the SK's uploaded documents (already sent to Shukhee via
+	upload_medias) as a permanent local File on the given Call Logs record -- so a local
+	audit trail of what was shown to the doctor exists even though Shukhee already has its
+	own copy of it. Returns the permanent /files/... URL, for consultation.py's
+	start_consultation to record on a Call Log Media child row. Best-effort by design: that
+	call site catches per-file failures individually so one bad attachment never costs the
+	SK the others, or the booking itself."""
+	from frappe.utils.file_manager import save_file
+
+	file_doc = save_file(filename or f"call-log-media-{index}", content, "Call Logs", docname, is_private=1)
+	return file_doc.file_url
 
 
 # ── booking + polling ────────────────────────────────────────────────────────

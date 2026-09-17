@@ -462,5 +462,59 @@ class TestDownloadAndAttach(unittest.TestCase):
 			shukhee_client.download_and_attach("Call Logs", "CL-1", "invoice", "https://x/doc.pdf")
 
 
+class TestUploadMedias(unittest.TestCase):
+
+	def test_empty_payloads_short_circuits_without_a_request(self):
+		self.assertEqual(shukhee_client.upload_medias(MagicMock(), "sk-p1", []), [])
+
+	@patch("shukhee_integration.shukhee_client._authed_request")
+	def test_sends_each_payload_as_a_multipart_attachment(self, mock_authed):
+		mock_authed.return_value = {"data": {"files": [{"id": "f1"}, {"id": "f2"}]}}
+
+		result = shukhee_client.upload_medias(
+			MagicMock(),
+			"sk-p1",
+			[("rx.jpg", b"rx-bytes", "image/jpeg"), ("report.jpg", b"report-bytes", "image/jpeg")],
+			doc_type="lab_report",
+		)
+
+		self.assertEqual(result, ["f1", "f2"])
+		_, kwargs = mock_authed.call_args
+		self.assertEqual(kwargs["data"], {"type": "lab_report", "patientId": "sk-p1"})
+		self.assertEqual(
+			kwargs["files"],
+			[
+				("attachments", ("rx.jpg", b"rx-bytes", "image/jpeg")),
+				("attachments", ("report.jpg", b"report-bytes", "image/jpeg")),
+			],
+		)
+
+	@patch("shukhee_integration.shukhee_client._authed_request")
+	def test_missing_or_malformed_files_list_yields_no_ids(self, mock_authed):
+		mock_authed.return_value = {"data": {}}
+		result = shukhee_client.upload_medias(MagicMock(), "sk-p1", [("rx.jpg", b"x", "image/jpeg")])
+		self.assertEqual(result, [])
+
+
+class TestAttachUploadedMedia(unittest.TestCase):
+
+	@patch("frappe.utils.file_manager.save_file")
+	def test_saves_file_against_the_call_log_and_returns_its_url(self, mock_save_file):
+		mock_save_file.return_value = MagicMock(file_url="/files/CL-1-rx.jpg")
+
+		result = shukhee_client.attach_uploaded_media("CL-1", "rx.jpg", b"rx-bytes", 0)
+
+		mock_save_file.assert_called_once_with("rx.jpg", b"rx-bytes", "Call Logs", "CL-1", is_private=1)
+		self.assertEqual(result, "/files/CL-1-rx.jpg")
+
+	@patch("frappe.utils.file_manager.save_file")
+	def test_missing_filename_falls_back_to_a_generated_name(self, mock_save_file):
+		mock_save_file.return_value = MagicMock(file_url="/files/CL-1-media-2")
+		shukhee_client.attach_uploaded_media("CL-1", "", b"rx-bytes", 2)
+		mock_save_file.assert_called_once_with(
+			"call-log-media-2", b"rx-bytes", "Call Logs", "CL-1", is_private=1
+		)
+
+
 if __name__ == "__main__":
 	unittest.main()
