@@ -244,7 +244,7 @@
    "fieldname": "sva_audit_log",
    "fieldtype": "HTML",
    "label": "Audit Log",
-   "description": "Rendered as a connected SVADatatable of Shukhee Call Audit Log rows for this call -- see the SVADatatable Configuration fixture for Call Logs."
+   "description": "Rendered as a connected SVADatatable of Shukhee Call Audit Log rows for this call -- see the sva_ft Property Setter fixture on this field."
   }
  ],
  "links": [],

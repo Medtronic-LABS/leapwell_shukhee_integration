@@ -11,13 +11,14 @@ app_license = "gpl-3.0"
 # Doctypes here Link to Provider (UHIS Shukhee User.uhis, Call Logs.uhis_user).
 required_apps = ["spice_next_core"]
 
-# frappe_theme (a spice_next_core dependency, so always present) provides the
-# SVADatatable Configuration mechanism -- Call Logs' Audit Log tab renders its
-# Shukhee Call Audit Log rows via the sva_audit_log HTML field using this
-# fixture, no custom JS needed. Filtered to just this doctype's own config, not
-# every SVADatatable Configuration on the site.
+# frappe_theme (a spice_next_core dependency, so always present) reads the
+# sva_ft Property Setter on Call Logs.sva_audit_log to render its connected
+# Shukhee Call Audit Log rows in the Audit Log tab, no custom JS needed --
+# same convention spice_next_core uses pervasively for its own connections.
+# Filtered to just this doctype's own property setters, not every sva_ft on
+# the site.
 fixtures = [
-	{"dt": "SVADatatable Configuration", "filters": [["name", "in", ["Call Logs"]]]},
+	{"dt": "Property Setter", "filters": [["doc_type", "in", ["Call Logs"]]]},
 ]
 
 # Each item in the list will be shown as an app in the apps page
