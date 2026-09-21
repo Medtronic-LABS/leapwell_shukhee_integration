@@ -212,6 +212,88 @@ class TestAuthedRequest(unittest.TestCase):
 		self.assertNotIn("raise_on_401", retry_kwargs)
 
 
+class TestRequestAuditLogging(unittest.TestCase):
+	"""_request is the true bottom chokepoint for every outbound Shukhee call
+	(direct and via _authed_request) -- these confirm audit.log_call fires
+	exactly once per call, on every path, with the right status/status_code."""
+
+	@patch("shukhee_integration.audit.log_call")
+	@patch("requests.request")
+	def test_success_logs_success_status(self, mock_request, mock_log_call):
+		mock_request.return_value = MagicMock(status_code=200, json=lambda: {"ok": True})
+		mock_request.return_value.raise_for_status = MagicMock()
+
+		result = shukhee_client._request("GET", "https://x/y")
+
+		self.assertEqual(result, {"ok": True})
+		mock_log_call.assert_called_once()
+		_, kwargs = mock_log_call.call_args
+		self.assertEqual(kwargs["direction"], "Outbound")
+		self.assertEqual(kwargs["endpoint"], "GET https://x/y")
+		self.assertEqual(kwargs["status"], "Success")
+		self.assertEqual(kwargs["status_code"], 200)
+		self.assertIsNone(kwargs["error"])
+
+	@patch("shukhee_integration.audit.log_call")
+	@patch("requests.request")
+	def test_http_error_logs_failed_status_then_raises(self, mock_request, mock_log_call):
+		import requests as requests_module
+
+		resp = MagicMock(status_code=422)
+		resp.json.side_effect = ValueError("not json")
+		resp.text = "Validation failed"
+		error = requests_module.HTTPError(response=resp)
+		mock_request.return_value.raise_for_status = MagicMock(side_effect=error)
+		mock_request.return_value.status_code = 422
+
+		with self.assertRaises(frappe.ValidationError):
+			shukhee_client._request("POST", "https://x/y", json={"a": 1})
+
+		mock_log_call.assert_called_once()
+		_, kwargs = mock_log_call.call_args
+		self.assertEqual(kwargs["status"], "Failed")
+		self.assertEqual(kwargs["status_code"], 422)
+
+	@patch("shukhee_integration.audit.log_call")
+	@patch("requests.request")
+	def test_401_with_raise_on_401_logs_and_raises_internal_signal(self, mock_request, mock_log_call):
+		import requests as requests_module
+
+		resp = MagicMock(status_code=401)
+		error = requests_module.HTTPError(response=resp)
+		mock_request.return_value.raise_for_status = MagicMock(side_effect=error)
+		mock_request.return_value.status_code = 401
+
+		with self.assertRaises(ShukheeAuthExpired):
+			shukhee_client._request("GET", "https://x/y", raise_on_401=True)
+
+		# Still audited -- the request really was made and really did get a 401,
+		# even though this particular exception is an internal retry signal, not
+		# a surfaced-to-caller failure.
+		mock_log_call.assert_called_once()
+		_, kwargs = mock_log_call.call_args
+		self.assertEqual(kwargs["status"], "Failed")
+		self.assertEqual(kwargs["status_code"], 401)
+
+	@patch("frappe.enqueue")
+	@patch("requests.request")
+	def test_request_payload_is_redacted_before_logging(self, mock_request, mock_enqueue):
+		# Deliberately does NOT mock audit.log_call -- redaction happens inside
+		# it (synchronously, before frappe.enqueue), so mocking log_call itself
+		# would skip the exact thing this test needs to prove.
+		mock_request.return_value = MagicMock(status_code=200, json=lambda: {"ok": True})
+		mock_request.return_value.raise_for_status = MagicMock()
+
+		shukhee_client._request(
+			"POST", "https://x/y", headers={"Authorization": "Bearer secret-token"}
+		)
+
+		mock_enqueue.assert_called_once()
+		_, kwargs = mock_enqueue.call_args
+		self.assertIn("[REDACTED]", kwargs["request_payload"])
+		self.assertNotIn("secret-token", kwargs["request_payload"])
+
+
 class TestResolveSpecialityId(unittest.TestCase):
 
 	@patch("shukhee_integration.shukhee_client.list_specialities")
@@ -439,10 +521,11 @@ class TestBookInstantCall(unittest.TestCase):
 
 class TestDownloadAndAttach(unittest.TestCase):
 
+	@patch("shukhee_integration.audit.log_call")
 	@patch("frappe.utils.file_manager.save_file")
 	@patch("requests.get")
-	def test_success_returns_file_url(self, mock_get, mock_save_file):
-		mock_get.return_value = MagicMock(content=b"pdf-bytes")
+	def test_success_returns_file_url(self, mock_get, mock_save_file, mock_log_call):
+		mock_get.return_value = MagicMock(content=b"pdf-bytes", status_code=200)
 		mock_get.return_value.raise_for_status = MagicMock()
 		mock_save_file.return_value = MagicMock(file_url="/files/CL-1-prescription.pdf")
 
@@ -452,14 +535,29 @@ class TestDownloadAndAttach(unittest.TestCase):
 		mock_save_file.assert_called_once_with(
 			"CL-1-prescription.pdf", b"pdf-bytes", "Call Logs", "CL-1", is_private=1
 		)
+		# Audited, response_payload always None -- binary content is never logged,
+		# and call_log is the docname directly since doctype == "Call Logs".
+		mock_log_call.assert_called_once()
+		_, kwargs = mock_log_call.call_args
+		self.assertEqual(kwargs["status"], "Success")
+		self.assertEqual(kwargs["status_code"], 200)
+		self.assertEqual(kwargs["call_log"], "CL-1")
+		self.assertIsNone(kwargs["response_payload"])
 
+	@patch("shukhee_integration.audit.log_call")
 	@patch("requests.get")
-	def test_download_failure_raises_validation_error(self, mock_get):
+	def test_download_failure_raises_validation_error(self, mock_get, mock_log_call):
 		import requests as requests_module
 
 		mock_get.side_effect = requests_module.RequestException("timeout")
 		with self.assertRaises(frappe.ValidationError):
 			shukhee_client.download_and_attach("Call Logs", "CL-1", "invoice", "https://x/doc.pdf")
+
+		# Logged even though the call raised -- finally block runs regardless.
+		mock_log_call.assert_called_once()
+		_, kwargs = mock_log_call.call_args
+		self.assertEqual(kwargs["status"], "Failed")
+		self.assertIn("timeout", kwargs["error"])
 
 
 class TestUploadMedias(unittest.TestCase):

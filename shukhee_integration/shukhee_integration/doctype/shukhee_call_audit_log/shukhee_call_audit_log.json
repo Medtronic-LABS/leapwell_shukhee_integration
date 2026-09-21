@@ -1,0 +1,125 @@
+{
+ "actions": [],
+ "autoname": "autoincrement",
+ "creation": "2026-09-21 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "direction",
+  "endpoint",
+  "call_log",
+  "shukhee_user",
+  "correlation_id",
+  "status",
+  "status_code",
+  "duration_ms",
+  "request_payload",
+  "response_payload",
+  "error",
+  "logged_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "direction",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Direction",
+   "options": "Inbound\nOutbound",
+   "reqd": 1
+  },
+  {
+   "fieldname": "endpoint",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Endpoint",
+   "description": "Dotted function path for Inbound (e.g. shukhee_integration.api.consultation.start_consultation); 'METHOD URL' for Outbound.",
+   "reqd": 1
+  },
+  {
+   "fieldname": "call_log",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Call Log",
+   "options": "Call Logs",
+   "description": "Blank for outbound calls made before the Call Logs record exists yet (patient resolution, media upload, booking) -- backfilled once it's created."
+  },
+  {
+   "fieldname": "shukhee_user",
+   "fieldtype": "Link",
+   "label": "Shukhee User",
+   "options": "UHIS Shukhee User"
+  },
+  {
+   "fieldname": "correlation_id",
+   "fieldtype": "Data",
+   "label": "Correlation ID",
+   "description": "Groups every row from one inbound request (including outbound calls made before a Call Log existed) so they can be found even when Call Log is blank."
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Success\nFailed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "status_code",
+   "fieldtype": "Int",
+   "label": "HTTP Status Code"
+  },
+  {
+   "fieldname": "duration_ms",
+   "fieldtype": "Int",
+   "label": "Duration (ms)"
+  },
+  {
+   "fieldname": "request_payload",
+   "fieldtype": "Long Text",
+   "label": "Request Payload",
+   "description": "Redacted, size-capped JSON. Never contains raw file bytes, passwords, or tokens."
+  },
+  {
+   "fieldname": "response_payload",
+   "fieldtype": "Long Text",
+   "label": "Response Payload",
+   "description": "Redacted, size-capped JSON. Always blank for binary/file downloads."
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Small Text",
+   "label": "Error"
+  },
+  {
+   "fieldname": "logged_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Logged At",
+   "reqd": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-21 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Shukhee Integration",
+ "name": "Shukhee Call Audit Log",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 0,
+   "email": 0,
+   "export": 1,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 0
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "hide_toolbar": 1
+}

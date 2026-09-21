@@ -19,6 +19,7 @@ import frappe
 from frappe import _
 
 from shukhee_integration import shukhee_client
+from shukhee_integration.audit import audit_inbound
 from spice_next_core.auth.decorators import current_remote_user_id, whitelist
 
 _TERMINAL_STATUSES = {"completed", "rejected", "cancelled", "on-hold"}
@@ -78,6 +79,7 @@ def get_specialities():
 
 
 @whitelist(methods=["POST"], remote_auth=True)
+@audit_inbound
 def start_consultation():
 	"""Books an instant call with Shukhee and returns the video-call join URL. Multipart
 	form fields: contact_number, reason, requested_speciality, encounter_id (optional),
@@ -213,6 +215,7 @@ def start_consultation():
 
 
 @whitelist(methods=["POST"], remote_auth=True)
+@audit_inbound
 def get_consultation_status(payload=None):
 	"""Polled by the client. Returns cached status/links with no external call once the
 	consultation has reached a terminal state; otherwise checks Shukhee live."""
@@ -278,6 +281,7 @@ def get_consultation_status(payload=None):
 
 
 @whitelist(methods=["POST"], remote_auth=True)
+@audit_inbound
 def get_prescription(payload=None):
 	"""Returns the already-downloaded prescription/invoice links for a completed consultation."""
 	env = _resolve_env(payload)
@@ -299,6 +303,7 @@ def get_prescription(payload=None):
 
 
 @whitelist(methods=["POST"], remote_auth=True)
+@audit_inbound
 def download_document(payload=None):
 	"""Returns a completed consultation's prescription/invoice as base64-encoded bytes.
 

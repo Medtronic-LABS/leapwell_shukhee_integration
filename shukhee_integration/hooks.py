@@ -150,23 +150,11 @@ required_apps = ["spice_next_core"]
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"shukhee_integration.tasks.all"
-# 	],
-# 	"daily": [
-# 		"shukhee_integration.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"shukhee_integration.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"shukhee_integration.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"shukhee_integration.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"daily": [
+		"shukhee_integration.audit.purge_old_audit_logs",
+	],
+}
 
 # Testing
 # -------

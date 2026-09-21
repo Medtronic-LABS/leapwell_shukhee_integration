@@ -8,15 +8,16 @@ collection, or an identity mismatch) if that dependency is ever pointed at a sta
 divergent copy instead of the real spice_next_core module.
 
 Every other test class below calls each endpoint via inspect.unwrap(...) — the raw
-business logic underneath two stacked layers (frappe.whitelist's own argument-typing
-wrapper, then @whitelist(remote_auth=True)'s require_remote_auth guard; both use
-functools.wraps, so inspect.unwrap walks both — verified via bench console). This
-deliberately bypasses the X-Auth-Token guard, which needs a real bound frappe.request and
-is already exhaustively covered by spice_next_core's own
-TestRequireRemoteAuthDecorator/TestWhitelistWrapper — re-mocking it on every one of these
-tests would just be auth-guard noise on top of the business logic these tests actually
+business logic underneath frappe.whitelist's own argument-typing wrapper, then
+@whitelist(remote_auth=True)'s require_remote_auth guard, then (for every endpoint
+except get_specialities) shukhee_integration.audit.audit_inbound; all three use
+functools.wraps, so inspect.unwrap walks through all of them — verified via bench
+console. This deliberately bypasses both the X-Auth-Token guard (already exhaustively
+covered by spice_next_core's own TestRequireRemoteAuthDecorator/TestWhitelistWrapper)
+and audit logging (covered by tests/test_audit.py) — re-mocking either on every one of
+these tests would just be noise on top of the business logic these tests actually
 target. TestSpiceNextCoreIntegration separately confirms every endpoint here really is
-wired through that guard.
+wired through the require_remote_auth guard.
 """
 
 import inspect
@@ -143,6 +144,38 @@ class TestSpiceNextCoreIntegration(unittest.TestCase):
 				fully_unwrapped = inspect.unwrap(fn)
 				self.assertIsNot(fn, once_unwrapped)
 				self.assertIsNot(once_unwrapped, fully_unwrapped)
+
+
+class TestAuditInboundWiring(unittest.TestCase):
+	"""Confirms audit_inbound is wired to exactly the 4 call-related endpoints, not
+	get_specialities (excluded -- it has no call context, see audit.py's docstring).
+
+	functools.wraps sets __wrapped__ on every decorator layer that uses it, so
+	__wrapped__ alone can't distinguish "wrapped by audit_inbound" from "wrapped by
+	require_remote_auth" -- audit_inbound's wrapper carries an explicit
+	__audit_inbound__ marker for exactly this reason (see audit.py)."""
+
+	@staticmethod
+	def _has_audit_inbound_layer(fn):
+		seen = fn
+		while seen is not None:
+			if getattr(seen, "__audit_inbound__", False):
+				return True
+			seen = getattr(seen, "__wrapped__", None)
+		return False
+
+	def test_call_related_endpoints_are_wrapped(self):
+		for fn in (
+			consultation.start_consultation,
+			consultation.get_consultation_status,
+			consultation.get_prescription,
+			consultation.download_document,
+		):
+			with self.subTest(fn=fn.__name__):
+				self.assertTrue(self._has_audit_inbound_layer(fn))
+
+	def test_get_specialities_is_not_wrapped_by_audit_inbound(self):
+		self.assertFalse(self._has_audit_inbound_layer(consultation.get_specialities))
 
 
 class TestResolveEnv(unittest.TestCase):
