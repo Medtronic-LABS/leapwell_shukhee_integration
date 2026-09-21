@@ -11,6 +11,16 @@ app_license = "gpl-3.0"
 # Doctypes here Link to Provider (UHIS Shukhee User.uhis, Call Logs.uhis_user).
 required_apps = ["spice_next_core"]
 
+# frappe_theme (a spice_next_core dependency, so always present) reads the
+# sva_ft Property Setter on Call Logs.sva_audit_log to render its connected
+# Shukhee Call Audit Log rows in the Audit Log tab, no custom JS needed --
+# same convention spice_next_core uses pervasively for its own connections.
+# Filtered to just this doctype's own property setters, not every sva_ft on
+# the site.
+fixtures = [
+	{"dt": "Property Setter", "filters": [["doc_type", "in", ["Call Logs"]]]},
+]
+
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
 # 	{
@@ -150,23 +160,11 @@ required_apps = ["spice_next_core"]
 # Scheduled Tasks
 # ---------------
 
-# scheduler_events = {
-# 	"all": [
-# 		"shukhee_integration.tasks.all"
-# 	],
-# 	"daily": [
-# 		"shukhee_integration.tasks.daily"
-# 	],
-# 	"hourly": [
-# 		"shukhee_integration.tasks.hourly"
-# 	],
-# 	"weekly": [
-# 		"shukhee_integration.tasks.weekly"
-# 	],
-# 	"monthly": [
-# 		"shukhee_integration.tasks.monthly"
-# 	],
-# }
+scheduler_events = {
+	"daily": [
+		"shukhee_integration.audit.purge_old_audit_logs",
+	],
+}
 
 # Testing
 # -------

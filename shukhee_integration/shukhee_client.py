@@ -19,6 +19,8 @@ import frappe
 import requests
 from frappe import _
 
+from shukhee_integration import audit
+
 _TOKEN_REFRESH_BUFFER_S = 30
 _DEFAULT_TOKEN_TTL_S = 3300  # fallback if the JWT has no exp claim
 _REQUEST_TIMEOUT_S = 10
@@ -60,12 +62,25 @@ class ShukheeAuthExpired(Exception):
 
 
 def _request(method, url, *, raise_on_401=False, **kwargs):
+	# status/status_code/result/error are captured into locals (rather than
+	# left to fall out of scope on return/raise) so the finally block below
+	# can log exactly one Shukhee Call Audit Log row per call, on every path
+	# (success, HTTPError, RequestException, or the internal 401-retry
+	# signal) -- without changing any of the existing raise/throw behavior.
+	status, status_code, result, error = "Success", None, None, None
+	start = time.monotonic()
 	try:
 		resp = requests.request(method, url, timeout=_REQUEST_TIMEOUT_S, **kwargs)
+		status_code = resp.status_code
 		resp.raise_for_status()
-		return resp.json()
+		result = resp.json()
+		return result
 	except requests.HTTPError as e:
+		status = "Failed"
+		if e.response is not None:
+			status_code = e.response.status_code
 		if raise_on_401 and e.response is not None and e.response.status_code == 401:
+			error = "401 -- cached token rejected, retrying with a fresh login"
 			raise ShukheeAuthExpired() from e
 		# Surface Shukhee's own validation message (e.g. "reason" field name,
 		# missing/invalid param) instead of just the bare status code -- this
@@ -75,13 +90,31 @@ def _request(method, url, *, raise_on_401=False, **kwargs):
 			detail = e.response.json()
 		except Exception:
 			detail = e.response.text[:500] if e.response is not None else None
+		error = f"{e} -- {detail}"
+		result = detail
 		frappe.log_error(
 			frappe.get_traceback(), f"Shukhee API call failed: {method} {url} -- {detail}"
 		)
 		frappe.throw(_("Shukhee API call failed: {0} -- {1}").format(str(e), detail), frappe.ValidationError)
 	except requests.RequestException as e:
+		status = "Failed"
+		error = str(e)
 		frappe.log_error(frappe.get_traceback(), f"Shukhee API call failed: {method} {url}")
 		frappe.throw(_("Shukhee API call failed: {0}").format(str(e)), frappe.ValidationError)
+	finally:
+		audit.log_call(
+			direction="Outbound",
+			endpoint=f"{method} {url}",
+			call_log=getattr(frappe.local, "current_call_log", None),
+			correlation_id=getattr(frappe.local, "shukhee_audit_correlation_id", None),
+			shukhee_user=getattr(frappe.local, "current_shukhee_user", None),
+			request_payload=audit.sanitize_outbound_kwargs(kwargs),
+			response_payload=result,
+			status=status,
+			status_code=status_code,
+			error=error,
+			duration_ms=int((time.monotonic() - start) * 1000),
+		)
 
 
 # ── auth ─────────────────────────────────────────────────────────────────────
@@ -107,6 +140,11 @@ def refresh(refresh_token):
 def get_valid_token(shukhee_user_doc):
 	"""Returns a live Shukhee access token for this UHIS Shukhee User, reusing a cached one
 	when possible. Caches via frappe.cache() (not doctype fields) keyed per record."""
+	# Every authenticated outbound call (via _authed_request) and login/refresh
+	# (only ever called from here) funnels through this function first -- the
+	# one place to record which Shukhee credential a request-scoped chain of
+	# outbound calls is using, for the audit log's shukhee_user field.
+	frappe.local.current_shukhee_user = shukhee_user_doc.name
 	cache_key = f"shukhee_token:{shukhee_user_doc.name}"
 	cached = frappe.cache().get_value(cache_key)
 	now_ms = time.time() * 1000
@@ -465,12 +503,33 @@ def download_and_attach(doctype, docname, fieldname, url):
 	permanent Frappe File on the given record. Returns the permanent /files/... URL."""
 	from frappe.utils.file_manager import save_file
 
+	status, status_code, error = "Success", None, None
+	start = time.monotonic()
 	try:
 		resp = requests.get(url, timeout=_REQUEST_TIMEOUT_S)
+		status_code = resp.status_code
 		resp.raise_for_status()
-	except requests.RequestException:
+	except requests.RequestException as e:
+		status = "Failed"
+		error = str(e)
 		frappe.log_error(frappe.get_traceback(), f"Shukhee document download failed: {url}")
 		frappe.throw(_("Could not download the document from Shukhee."), frappe.ValidationError)
+	finally:
+		# response_payload is always None here -- this downloads binary file
+		# content, which must never be written into the audit log.
+		audit.log_call(
+			direction="Outbound",
+			endpoint=f"GET {fieldname}-download",
+			call_log=docname if doctype == "Call Logs" else getattr(frappe.local, "current_call_log", None),
+			correlation_id=getattr(frappe.local, "shukhee_audit_correlation_id", None),
+			shukhee_user=getattr(frappe.local, "current_shukhee_user", None),
+			request_payload={"url": url, "doctype": doctype, "docname": docname, "fieldname": fieldname},
+			response_payload=None,
+			status=status,
+			status_code=status_code,
+			error=error,
+			duration_ms=int((time.monotonic() - start) * 1000),
+		)
 
 	file_doc = save_file(
 		f"{docname}-{fieldname}.pdf", resp.content, doctype, docname, is_private=1

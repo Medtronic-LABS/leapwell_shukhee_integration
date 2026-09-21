@@ -39,7 +39,9 @@
   "prescription_link",
   "prescription_preview",
   "prescription_column_break",
-  "invoice_link"
+  "invoice_link",
+  "audit_log_tab",
+  "sva_audit_log"
  ],
  "fields": [
   {
@@ -232,6 +234,17 @@
    "fieldtype": "Data",
    "label": "Invoice Link",
    "description": "Our own permanent File URL (downloaded from Shukhee's short-lived presigned link once completed)."
+  },
+  {
+   "fieldname": "audit_log_tab",
+   "fieldtype": "Tab Break",
+   "label": "Audit Log"
+  },
+  {
+   "fieldname": "sva_audit_log",
+   "fieldtype": "HTML",
+   "label": "Audit Log",
+   "description": "Rendered as a connected SVADatatable of Shukhee Call Audit Log rows for this call -- see the sva_ft Property Setter fixture on this field."
   }
  ],
  "links": [],
