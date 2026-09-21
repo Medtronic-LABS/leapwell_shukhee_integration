@@ -1,0 +1,30 @@
+[
+ {
+  "doctype": "SVADatatable Configuration",
+  "name": "Call Logs",
+  "parent_doctype": "Call Logs",
+  "child_doctypes": [
+   {
+    "doctype": "SVADatatable Configuration Child",
+    "idx": 1,
+    "html_field": "sva_audit_log",
+    "connection_type": "Direct",
+    "link_doctype": "Shukhee Call Audit Log",
+    "link_fieldname": "call_log",
+    "title": "Audit Log",
+    "crud_permissions": "[\"read\"]",
+    "listview_settings": "[{\"fieldname\": \"direction\", \"fieldtype\": \"Select\", \"label\": \"Direction\", \"width\": 2, \"inline_edit\": 0, \"sticky\": 0, \"wrap\": 0, \"color\": \"\", \"bg_color\": \"\"}, {\"fieldname\": \"endpoint\", \"fieldtype\": \"Data\", \"label\": \"Endpoint\", \"width\": 4, \"inline_edit\": 0, \"sticky\": 0, \"wrap\": 0, \"color\": \"\", \"bg_color\": \"\"}, {\"fieldname\": \"status\", \"fieldtype\": \"Select\", \"label\": \"Status\", \"width\": 2, \"inline_edit\": 0, \"sticky\": 0, \"wrap\": 0, \"color\": \"\", \"bg_color\": \"\"}, {\"fieldname\": \"status_code\", \"fieldtype\": \"Int\", \"label\": \"HTTP Status\", \"width\": 2, \"inline_edit\": 0, \"sticky\": 0, \"wrap\": 0, \"color\": \"\", \"bg_color\": \"\"}, {\"fieldname\": \"duration_ms\", \"fieldtype\": \"Int\", \"label\": \"Duration (ms)\", \"width\": 2, \"inline_edit\": 0, \"sticky\": 0, \"wrap\": 0, \"color\": \"\", \"bg_color\": \"\"}, {\"fieldname\": \"logged_at\", \"fieldtype\": \"Datetime\", \"label\": \"Logged At\", \"width\": 3, \"inline_edit\": 0, \"sticky\": 0, \"wrap\": 0, \"color\": \"\", \"bg_color\": \"\"}]",
+    "allow_export": 1,
+    "full_screen_dialog": 1,
+    "redirect_to_main_form": 0,
+    "disable_workflow": 1
+   }
+  ],
+  "child_confs": [],
+  "number_cards": [],
+  "charts": [],
+  "triggers": [],
+  "docstatus": 0,
+  "modified": "2026-09-21 00:00:00.000000"
+ }
+]
