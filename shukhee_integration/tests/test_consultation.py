@@ -21,6 +21,7 @@ wired through the require_remote_auth guard.
 """
 
 import inspect
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -89,6 +90,8 @@ def _call_log_doc(**overrides):
 		doctor_name=None,
 		doctor_speciality=None,
 		doctor_facility=None,
+		appointment_status=None,
+		clinical_data=None,
 	)
 	defaults.update(overrides)
 	doc = MagicMock()
@@ -333,6 +336,48 @@ class TestStartConsultation(unittest.TestCase):
 		call_log.insert.assert_called_once_with(ignore_permissions=True)
 		self.assertEqual(result["call_url"], "https://video/call/req-1")
 		self.assertEqual(result["status"], call_log.status)
+		self.assertIsNone(mock_shukhee_client.book_instant_call.call_args.kwargs["clinical_data"])
+
+	@patch("frappe.db.commit")
+	@patch("frappe.get_doc")
+	@patch("shukhee_integration.api.consultation.shukhee_client")
+	@patch("shukhee_integration.api.consultation._current_shukhee_user")
+	@patch("shukhee_integration.api.consultation._current_provider")
+	def test_clinical_data_is_parsed_and_passed_through(
+		self,
+		mock_current_provider,
+		mock_current_shukhee_user,
+		mock_shukhee_client,
+		mock_get_doc,
+		mock_commit,
+	):
+		mock_current_provider.return_value = "PROV-1"
+		mock_current_shukhee_user.return_value = MagicMock()
+
+		mock_shukhee_client.find_or_create_shukhee_patient.return_value = ("sk-p1", {"fullName": "Jane"})
+		mock_shukhee_client.upload_medias.return_value = []
+		mock_shukhee_client.resolve_speciality_id.return_value = ("1", "General Medicine")
+		mock_shukhee_client.book_instant_call.return_value = "txn-1"
+		mock_shukhee_client.resolve_request_id.return_value = "req-1"
+		mock_shukhee_client.get_valid_token.return_value = "tok-1"
+		mock_shukhee_client.build_video_call_url.return_value = "https://video/call/req-1"
+		mock_get_doc.return_value = MagicMock(name="CL-1", status="pending")
+
+		with _LocalAttr(
+			"form_dict",
+			{
+				"contact_number": "01410820112",
+				"reason": "fever",
+				"requested_speciality": "General Medicine",
+				"clinical_data": '{"vitals": [{"temperature": "99"}]}',
+			},
+		), _LocalAttr("request", MagicMock(files=None)):
+			start_consultation()
+
+		self.assertEqual(
+			mock_shukhee_client.book_instant_call.call_args.kwargs["clinical_data"],
+			{"vitals": [{"temperature": "99"}]},
+		)
 
 	@patch("shukhee_integration.api.consultation._current_shukhee_user")
 	@patch("shukhee_integration.api.consultation._current_provider")
@@ -577,7 +622,11 @@ class TestGetConsultationStatus(unittest.TestCase):
 	@patch("frappe.get_doc")
 	def test_terminal_status_short_circuits_no_shukhee_call(self, mock_get_doc):
 		mock_get_doc.return_value = _call_log_doc(
-			status="completed", prescription_link="/files/rx.pdf", doctor_name="Dr. A"
+			status="completed",
+			prescription_link="/files/rx.pdf",
+			doctor_name="Dr. A",
+			appointment_status="Completed",
+			clinical_data={"diagnosis": ["Common cold"]},
 		)
 		with patch("shukhee_integration.api.consultation.shukhee_client") as mock_client:
 			result = get_consultation_status(payload='{"call_log": "CL-1"}')
@@ -585,6 +634,8 @@ class TestGetConsultationStatus(unittest.TestCase):
 		self.assertEqual(result["status"], "completed")
 		self.assertEqual(result["prescription_link"], "/files/rx.pdf")
 		self.assertEqual(result["doctor_name"], "Dr. A")
+		self.assertEqual(result["appointment_status"], "Completed")
+		self.assertEqual(result["clinical_data"], {"diagnosis": ["Common cold"]})
 
 	def test_missing_call_log_raises(self):
 		with self.assertRaises(frappe.ValidationError):
@@ -603,6 +654,7 @@ class TestGetConsultationStatus(unittest.TestCase):
 		with patch("shukhee_integration.api.consultation.shukhee_client") as mock_client:
 			mock_client.get_emergency_request.return_value = {
 				"status": "in-progress",
+				"appointment": {"status": "ConsultationStarted"},
 				"doctor": {"name": "Dr. B", "specialty": {"title": "Pediatrics"}, "working_at": "Clinic X"},
 			}
 			result = get_consultation_status(payload='{"call_log": "CL-1"}')
@@ -610,7 +662,35 @@ class TestGetConsultationStatus(unittest.TestCase):
 		self.assertEqual(result["doctor_name"], "Dr. B")
 		self.assertEqual(result["doctor_speciality"], "Pediatrics")
 		self.assertEqual(result["doctor_facility"], "Clinic X")
+		self.assertEqual(result["appointment_status"], "ConsultationStarted")
+		self.assertIsNone(result["clinical_data"])
 		mock_set_value.assert_any_call("Call Logs", "CL-1", "doctor_name", "Dr. B")
+		mock_set_value.assert_any_call("Call Logs", "CL-1", "appointment_status", "ConsultationStarted")
+
+	@patch("frappe.db.commit")
+	@patch("frappe.db.set_value")
+	@patch("shukhee_integration.api.consultation._current_shukhee_user")
+	@patch("frappe.get_doc")
+	def test_no_clinical_data_when_appointment_status_not_completed(
+		self, mock_get_doc, mock_current_shukhee_user, mock_set_value, mock_commit
+	):
+		"""appointment.status can reach ConsultationEnd before the OUTER status is
+		"completed" -- clinical_data must not be read/stored until the outer status
+		says the vendor has actually finished writing it."""
+		mock_get_doc.return_value = _call_log_doc(status="in-progress")
+		mock_current_shukhee_user.return_value = MagicMock()
+
+		with patch("shukhee_integration.api.consultation.shukhee_client") as mock_client:
+			mock_client.get_emergency_request.return_value = {
+				"status": "in-progress",
+				"appointment": {"status": "ConsultationEnd", "clinicalData": {"diagnosis": ["Too early"]}},
+			}
+			result = get_consultation_status(payload='{"call_log": "CL-1"}')
+
+		self.assertEqual(result["appointment_status"], "ConsultationEnd")
+		self.assertIsNone(result["clinical_data"])
+		for call in mock_set_value.call_args_list:
+			self.assertNotEqual(call.args[2], "clinical_data")
 
 	@patch("frappe.db.commit")
 	@patch("frappe.db.set_value")
@@ -626,8 +706,14 @@ class TestGetConsultationStatus(unittest.TestCase):
 			mock_client.get_emergency_request.return_value = {
 				"status": "completed",
 				"appointment": {
+					"status": "Completed",
 					"prescriptionLink": "https://shukhee/rx.pdf",
 					"invoiceLink": "https://shukhee/inv.pdf",
+					"clinicalData": {
+						"chiefComplaints": ["fever"],
+						"diagnosis": ["Fever of other or unknown origin"],
+						"medicine": [{"brandName": "Napa", "dosage": "500 mg"}],
+					},
 				},
 			}
 			mock_client.download_and_attach.side_effect = [
@@ -639,6 +725,21 @@ class TestGetConsultationStatus(unittest.TestCase):
 		self.assertEqual(result["status"], "completed")
 		self.assertEqual(result["prescription_link"], "/files/CL-1-prescription.pdf")
 		self.assertEqual(result["invoice_link"], "/files/CL-1-invoice.pdf")
+		self.assertEqual(result["appointment_status"], "Completed")
+		self.assertEqual(
+			result["clinical_data"],
+			{
+				"chiefComplaints": ["fever"],
+				"diagnosis": ["Fever of other or unknown origin"],
+				"medicine": [{"brandName": "Napa", "dosage": "500 mg"}],
+			},
+		)
+		# frappe.db.set_value does NOT auto-serialize JSON fieldtype values -- the
+		# persisted value must already be a json.dumps'd string, not a raw dict.
+		clinical_data_calls = [c for c in mock_set_value.call_args_list if c.args[2] == "clinical_data"]
+		self.assertEqual(len(clinical_data_calls), 1)
+		self.assertIsInstance(clinical_data_calls[0].args[3], str)
+		self.assertEqual(json.loads(clinical_data_calls[0].args[3]), result["clinical_data"])
 
 
 class TestGetPrescription(unittest.TestCase):
@@ -646,10 +747,16 @@ class TestGetPrescription(unittest.TestCase):
 	@patch("frappe.get_doc")
 	def test_completed_returns_links(self, mock_get_doc):
 		mock_get_doc.return_value = _call_log_doc(
-			status="completed", prescription_link="/files/rx.pdf", invoice_link="/files/inv.pdf"
+			status="completed",
+			prescription_link="/files/rx.pdf",
+			invoice_link="/files/inv.pdf",
+			appointment_status="Completed",
+			clinical_data={"diagnosis": ["Common cold"]},
 		)
 		result = get_prescription(payload='{"call_log": "CL-1"}')
 		self.assertEqual(result["prescription_link"], "/files/rx.pdf")
+		self.assertEqual(result["appointment_status"], "Completed")
+		self.assertEqual(result["clinical_data"], {"diagnosis": ["Common cold"]})
 
 	@patch("frappe.get_doc")
 	def test_not_completed_raises(self, mock_get_doc):

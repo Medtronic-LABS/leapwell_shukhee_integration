@@ -14,6 +14,7 @@ redirects/closes); this module only ever reports Shukhee's own status back.
 """
 
 import base64
+import json
 
 import frappe
 from frappe import _
@@ -85,7 +86,13 @@ def start_consultation():
 	form fields: contact_number, reason, requested_speciality, encounter_id (optional),
 	patient_name/patient_dob/patient_gender (optional -- only needed to create a new
 	Shukhee patient when neither Shukhee nor this platform's own Patient doctype already
-	has a record for contact_number), and per-type document groups: `medias_prescription`,
+	has a record for contact_number), `uhis_patient_id` (optional -- the local canonical
+	Patient client_uuid; resolves to Call Logs.patient when it names a real Patient record,
+	silently skipped otherwise -- this is a soft-degrade, never blocks booking),
+	`clinical_data` (optional, a JSON-stringified object --
+	chiefComplaints/pastIllness/familyHistory/menstrualHistory/vitals -- passed through
+	verbatim to Shukhee's own `clinicalData` booking field, see shukhee_client.book_instant_call),
+	and per-type document groups: `medias_prescription`,
 	`medias_lab_report`, `medias_other` (each a repeated file field, all optional) -- one
 	Shukhee upload call is made per non-empty group (Shukhee's own upload API only accepts
 	one `type` per call), so a single booking can attach a prescription photo AND a lab
@@ -103,6 +110,22 @@ def start_consultation():
 	patient_name = env.get("patient_name")
 	patient_dob = env.get("patient_dob")
 	patient_gender = env.get("patient_gender")
+	clinical_data = frappe.parse_json(env.get("clinical_data")) if env.get("clinical_data") else None
+
+	uhis_patient_id = env.get("uhis_patient_id")
+	patient = None
+	if uhis_patient_id:
+		if frappe.db.exists("Patient", uhis_patient_id):
+			patient = uhis_patient_id
+		else:
+			# Soft-degrade: booking must not get flakier because of a still-rolling-out
+			# mobile field. This only affects the new local `patient` Link (denormalized
+			# geography_node + sync.pull catchment visibility) -- Shukhee's own patient
+			# resolution below is untouched and remains the source of truth for the call.
+			frappe.log_error(
+				title="start_consultation: uhis_patient_id did not resolve to a Patient",
+				message=f"uhis_patient_id={uhis_patient_id} contact_number={contact_number}",
+			)
 
 	if not contact_number or not reason or not requested_speciality:
 		frappe.throw(
@@ -163,6 +186,7 @@ def start_consultation():
 		requested_speciality=matched_speciality,
 		call_type="video",
 		medical_document_ids=medical_document_ids,
+		clinical_data=clinical_data,
 	)
 
 	request_id = shukhee_client.resolve_request_id(shukhee_user_doc, contact_number)
@@ -177,7 +201,8 @@ def start_consultation():
 			"doctype": "Call Logs",
 			"shukhee_user": shukhee_user_doc.name,
 			"uhis_user": provider_name,
-			"patient_id": shukhee_patient_id,
+			"patient": patient,
+			"shukhee_patient_id": shukhee_patient_id,
 			"contact_number": contact_number,
 			"encounter_id": encounter_id,
 			"reason": reason,
@@ -234,6 +259,12 @@ def get_consultation_status(payload=None):
 			"doctor_name": doc.doctor_name,
 			"doctor_speciality": doc.doctor_speciality,
 			"doctor_facility": doc.doctor_facility,
+			"appointment_status": doc.appointment_status,
+			# Postgres/psycopg2 auto-deserializes a `json`-typed column back into a
+			# dict on SELECT (independent of Frappe's own ORM) -- doc.clinical_data
+			# is already a dict here, not a JSON string. json.loads() is only needed
+			# on the WRITE side (frappe.db.set_value does not auto-serialize).
+			"clinical_data": doc.clinical_data or None,
 		}
 
 	provider_name = doc.uhis_user
@@ -241,10 +272,14 @@ def get_consultation_status(payload=None):
 
 	detail = shukhee_client.get_emergency_request(shukhee_user_doc, doc.request_id)
 	new_status = detail.get("status") or doc.status
+	appointment = detail.get("appointment") or {}
 
 	updates = {"status": new_status}
+	if appointment.get("status"):
+		updates["appointment_status"] = appointment["status"]
+
+	clinical_data = None
 	if new_status == "completed":
-		appointment = detail.get("appointment") or {}
 		if appointment.get("prescriptionLink"):
 			updates["prescription_link"] = shukhee_client.download_and_attach(
 				"Call Logs", doc.name, "prescription", appointment["prescriptionLink"]
@@ -253,6 +288,9 @@ def get_consultation_status(payload=None):
 			updates["invoice_link"] = shukhee_client.download_and_attach(
 				"Call Logs", doc.name, "invoice", appointment["invoiceLink"]
 			)
+		clinical_data = appointment.get("clinicalData")
+		if clinical_data:
+			updates["clinical_data"] = json.dumps(clinical_data)
 
 	# Shukhee can assign a doctor before the call reaches a terminal status -- surface it
 	# on every poll (not just the completed one) so the connected screen can show who the
@@ -277,6 +315,10 @@ def get_consultation_status(payload=None):
 		"doctor_name": updates.get("doctor_name", doc.doctor_name),
 		"doctor_speciality": updates.get("doctor_speciality", doc.doctor_speciality),
 		"doctor_facility": updates.get("doctor_facility", doc.doctor_facility),
+		"appointment_status": updates.get("appointment_status", doc.appointment_status),
+		# doc.clinical_data is already a dict (see the terminal short-circuit branch's
+		# comment above) -- never json.loads() it, even in this fallback.
+		"clinical_data": clinical_data if clinical_data else (doc.clinical_data or None),
 	}
 
 
@@ -299,6 +341,8 @@ def get_prescription(payload=None):
 		"doctor_name": doc.doctor_name,
 		"doctor_speciality": doc.doctor_speciality,
 		"doctor_facility": doc.doctor_facility,
+		"appointment_status": doc.appointment_status,
+		"clinical_data": doc.clinical_data or None,
 	}
 
 

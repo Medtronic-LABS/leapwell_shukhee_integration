@@ -12,8 +12,10 @@
   "shukhee_user",
   "uhis_user",
   "participants_column_break",
-  "patient_id",
+  "patient",
+  "shukhee_patient_id",
   "contact_number",
+  "geography_node",
   "request_section",
   "encounter_id",
   "reason",
@@ -27,6 +29,8 @@
   "request_id",
   "transaction_id",
   "call_url",
+  "appointment_section",
+  "appointment_status",
   "doctor_section",
   "doctor_name",
   "doctor_speciality",
@@ -40,8 +44,12 @@
   "prescription_preview",
   "prescription_column_break",
   "invoice_link",
+  "clinical_data_section",
+  "clinical_data",
+  "clinical_data_preview",
   "audit_log_tab",
-  "sva_audit_log"
+  "sva_audit_log",
+  "sync_seq"
  ],
  "fields": [
   {
@@ -83,15 +91,31 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "patient_id",
+   "fieldname": "patient",
+   "fieldtype": "Link",
+   "label": "Patient",
+   "options": "Patient",
+   "description": "Real link to this platform's own Patient doctype -- resolved from the mobile app's `uhis_patient_id` at booking time when it validly resolves. Distinct from shukhee_patient_id (Shukhee's own vendor-side patient identity). Null when the app didn't send a valid id (soft-degrade, never blocks booking)."
+  },
+  {
+   "fieldname": "shukhee_patient_id",
    "fieldtype": "Data",
-   "label": "Patient ID",
+   "label": "Shukhee Patient ID",
    "description": "Shukhee-side patient id (resolved/created server-side from contact_number)."
   },
   {
    "fieldname": "contact_number",
    "fieldtype": "Data",
    "label": "Contact Number"
+  },
+  {
+   "fieldname": "geography_node",
+   "fieldtype": "Link",
+   "label": "Geography Node",
+   "options": "Geography Node",
+   "hidden": 1,
+   "read_only": 1,
+   "description": "Denormalized from patient's household at insert time (see shukhee_integration.hooks_impl.set_call_logs_geography_node) -- drives spice_next_core.api.sync.pull's catchment filter. Never client-supplied."
   },
   {
    "fieldname": "request_section",
@@ -162,6 +186,18 @@
    "fieldtype": "Small Text",
    "label": "Call URL",
    "description": "Includes a live Shukhee access token in the query string -- can exceed Data's 140-char limit."
+  },
+  {
+   "fieldname": "appointment_section",
+   "fieldtype": "Section Break",
+   "label": "Appointment"
+  },
+  {
+   "fieldname": "appointment_status",
+   "fieldtype": "Select",
+   "label": "Appointment Status",
+   "options": "\nScheduled\nConsultationStarted\nConsultationEnd\nCompleted",
+   "description": "From Shukhee's nested `appointment.status` (Title Case) -- distinct from the `status` field above (lowercase, the outer request-level status). Gates when clients show the live call view vs. a prescription-in-progress wait."
   },
   {
    "fieldname": "doctor_section",
@@ -236,6 +272,24 @@
    "description": "Our own permanent File URL (downloaded from Shukhee's short-lived presigned link once completed)."
   },
   {
+   "fieldname": "clinical_data_section",
+   "fieldtype": "Section Break",
+   "label": "Clinical Data"
+  },
+  {
+   "fieldname": "clinical_data",
+   "fieldtype": "JSON",
+   "hidden": 1,
+   "label": "Clinical Data",
+   "description": "Raw `appointment.clinicalData` from Shukhee, captured once the outer `status` reaches `completed` (chiefComplaints, diagnosis, labTest, advice, drugHistory, medicine[], mealInstruction[], lastVital, followUpComment/Day/Date) -- verbatim, read-only, never edited server-side. Persisted via frappe.db.set_value, which does NOT auto-serialize JSON fields -- always json.dumps() before writing. Do NOT json.loads() after reading: Postgres/psycopg2 auto-deserializes this json-typed column back into a dict on SELECT, independent of Frappe's own ORM -- a loaded doc's .clinical_data is already a dict."
+  },
+  {
+   "fieldname": "clinical_data_preview",
+   "fieldtype": "HTML",
+   "label": "Clinical Data Preview",
+   "depends_on": "eval:doc.clinical_data"
+  },
+  {
    "fieldname": "audit_log_tab",
    "fieldtype": "Tab Break",
    "label": "Audit Log"
@@ -244,7 +298,14 @@
    "fieldname": "sva_audit_log",
    "fieldtype": "HTML",
    "label": "Audit Log",
-   "description": "Rendered as a connected SVADatatable of Shukhee Call Audit Log rows for this call -- see the sva_ft Property Setter fixture on this field."
+   "description": "Rendered as a chronological lifecycle timeline of Shukhee Call Audit Log rows for this call -- see the sva_ft Property Setter fixture on this field (Custom HTML Block: Shukhee Call Audit Timeline)."
+  },
+  {
+   "fieldname": "sync_seq",
+   "fieldtype": "Int",
+   "label": "Sync Seq",
+   "read_only": 1,
+   "description": "Stamped by spice_next_core.hooks_impl.advance_sync_seq on insert/update -- drives spice_next_core.api.sync.pull's cursor. Pull-only: Call Logs has no offline-authored push path (booking always requires a live vendor round-trip)."
   }
  ],
  "links": [],

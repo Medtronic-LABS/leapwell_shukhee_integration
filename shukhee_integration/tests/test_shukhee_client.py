@@ -9,6 +9,7 @@ integration point with spice_next_core (see test_consultation.py), so keeping th
 green after any future rename is part of proving the integration wasn't broken.
 """
 
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -517,6 +518,39 @@ class TestBookInstantCall(unittest.TestCase):
 		)
 		_, kwargs = mock_authed.call_args
 		self.assertNotIn("medicalDocumentIds", kwargs["data"])
+
+	@patch("shukhee_integration.shukhee_client._authed_request")
+	def test_clinical_data_json_stringified(self, mock_authed):
+		mock_authed.return_value = {"success": True, "data": {"transactionId": "txn-4"}}
+		shukhee_client.book_instant_call(
+			MagicMock(),
+			shukhee_patient_id="sk-p1",
+			patient_details={"fullName": "Jane"},
+			contact_number="01410820112",
+			reason="fever",
+			speciality_id="1",
+			requested_speciality="General Medicine",
+			clinical_data={"vitals": [{"temperature": "99"}]},
+		)
+		_, kwargs = mock_authed.call_args
+		self.assertEqual(
+			json.loads(kwargs["data"]["clinicalData"]), {"vitals": [{"temperature": "99"}]}
+		)
+
+	@patch("shukhee_integration.shukhee_client._authed_request")
+	def test_no_clinical_data_omits_field(self, mock_authed):
+		mock_authed.return_value = {"success": True, "data": {"transactionId": "txn-5"}}
+		shukhee_client.book_instant_call(
+			MagicMock(),
+			shukhee_patient_id="sk-p1",
+			patient_details={"fullName": "Jane"},
+			contact_number="01410820112",
+			reason="fever",
+			speciality_id="1",
+			requested_speciality="General Medicine",
+		)
+		_, kwargs = mock_authed.call_args
+		self.assertNotIn("clinicalData", kwargs["data"])
 
 
 class TestDownloadAndAttach(unittest.TestCase):

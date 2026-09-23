@@ -401,6 +401,7 @@ def book_instant_call(
 	requested_speciality,
 	call_type="video",
 	medical_document_ids=None,
+	clinical_data=None,
 ):
 	"""POST /ssk/emergency-request/v3 -- books the instant call. Returns transaction_id;
 	the sandbox response does NOT include the new request's id -- see resolve_request_id.
@@ -408,7 +409,12 @@ def book_instant_call(
 	`patientDetails` is required by the live API even when `patientId` already references
 	an existing patient -- confirmed against the real sandbox: omitting it fails with
 	"Field 'patientDetails' doesn't have a default value" (422), contradicting the
-	Postman collection's own description, which implied patientId alone was sufficient."""
+	Postman collection's own description, which implied patientId alone was sufficient.
+
+	`clinical_data` (optional dict: chiefComplaints/pastIllness/familyHistory/
+	menstrualHistory/vitals) is passed through verbatim as Shukhee's own `clinicalData`
+	field, JSON-stringified the same way `patientDetails` already is -- omitted entirely
+	when not provided, never sent as an empty/null placeholder."""
 	form = {
 		"channel": "sskPortal",
 		"call_type": call_type,
@@ -424,6 +430,8 @@ def book_instant_call(
 	}
 	if medical_document_ids:
 		form["medicalDocumentIds"] = ",".join(str(i) for i in medical_document_ids)
+	if clinical_data:
+		form["clinicalData"] = frappe.as_json(clinical_data)
 
 	data = _authed_request(
 		"POST", f"{_api_base()}/ssk/emergency-request/v3", shukhee_user_doc, data=form

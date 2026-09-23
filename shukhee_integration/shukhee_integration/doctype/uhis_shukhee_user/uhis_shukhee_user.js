@@ -34,6 +34,16 @@ frappe.ui.form.on("UHIS Shukhee User", {
 window.shukhee_call_flow = {
 	POLL_INTERVAL_MS: 4000,
 	TERMINAL_STATUSES: ["completed", "rejected", "cancelled", "on-hold"],
+	// "At-or-past" ConsultationStarted, not exact-equals -- a poll cadence of
+	// 4s can easily skip straight over an intermediate value Shukhee held only
+	// briefly, so once the doctor has moved past ConsultationStarted, don't
+	// get stuck waiting to see that exact value again.
+	CONSULTATION_STARTED_STATUSES: ["ConsultationStarted", "ConsultationEnd", "Completed"],
+	// Bounds the new pre-show poll loop below -- unlike the mobile app (which
+	// already has AppConfig.teleconsultPollMaxAttempts), this loop previously
+	// didn't exist at all (the video call used to show immediately), so a
+	// stuck "Connecting..." screen would otherwise wait forever.
+	MAX_CONNECT_ATTEMPTS: 60,
 
 	async start(frm) {
 		const provider_user = await frappe.db.get_value("Provider", frm.doc.provider, "user");
@@ -172,10 +182,52 @@ window.shukhee_call_flow = {
 				const data = body.message || body;
 				this._call_log = data.call_log;
 				this._call_url = data.call_url;
-				this._show_video_call(flow, frm);
-				this._poll(frm);
+				this._render_loading(
+					flow,
+					__("Connecting to your doctor..."),
+					__("Please wait while the doctor joins the call.")
+				);
+				this._poll_until_started(frm);
 			})
 			.catch((err) => this._render_error(flow, err.message));
+	},
+
+	// Polls until the appointment reaches ConsultationStarted (per Shukhee's
+	// integration contract: don't show Join Call before then), or a terminal
+	// outer status is reached first (e.g. rejected/cancelled before any
+	// doctor ever joins, which must still resolve via _on_terminal, not hang
+	// here waiting for a status that will never arrive).
+	_poll_until_started(frm, attempt = 1) {
+		const check = () => {
+			frappe
+				.call({
+					method: "shukhee_integration.api.consultation.get_consultation_status",
+					args: { call_log: this._call_log },
+					headers: { "X-Auth-Token": `Bearer ${this._auth_token}` },
+				})
+				.then((r) => {
+					const data = r.message || {};
+					if (this.TERMINAL_STATUSES.includes(data.status)) {
+						this._on_terminal(frm, data);
+						return;
+					}
+					if (this.CONSULTATION_STARTED_STATUSES.includes(data.appointment_status)) {
+						this._show_video_call(this._flow, frm);
+						this._poll(frm);
+						return;
+					}
+					if (attempt >= this.MAX_CONNECT_ATTEMPTS) {
+						this._render_error(
+							this._flow,
+							__("Still waiting for the doctor to join. Please check back shortly.")
+						);
+						return;
+					}
+					this._poll_timer = setTimeout(() => this._poll_until_started(frm, attempt + 1), this.POLL_INTERVAL_MS);
+				})
+				.catch((err) => this._render_error(this._flow, err.message || __("Status check failed.")));
+		};
+		this._poll_timer = setTimeout(check, this.POLL_INTERVAL_MS);
 	},
 
 	_show_video_call(flow, frm) {
@@ -212,6 +264,7 @@ window.shukhee_call_flow = {
 
 	_poll(frm) {
 		if (this._poll_timer) clearTimeout(this._poll_timer);
+		this._shown_wrap_wait = false;
 		const check = () => {
 			frappe
 				.call({
@@ -223,9 +276,17 @@ window.shukhee_call_flow = {
 					const data = r.message || {};
 					if (this.TERMINAL_STATUSES.includes(data.status)) {
 						this._on_terminal(frm, data);
-					} else {
-						this._poll_timer = setTimeout(check, this.POLL_INTERVAL_MS);
+						return;
 					}
+					if (data.appointment_status === "ConsultationEnd" && !this._shown_wrap_wait) {
+						this._shown_wrap_wait = true;
+						this._render_loading(
+							this._flow,
+							__("Prescription in progress"),
+							__("Please wait while your doctor prepares your prescription. This may take 2–5 mins.")
+						);
+					}
+					this._poll_timer = setTimeout(check, this.POLL_INTERVAL_MS);
 				})
 				.catch((err) => this._render_error(this._flow, err.message || __("Status check failed.")));
 		};
@@ -247,33 +308,110 @@ window.shukhee_call_flow = {
 		}
 
 		flow.set_title(__("Consultation Details"));
-		this._render_loading(flow, __("Prescription in progress"), __("Please wait while your doctor prepares your prescription. This may take 2–5 mins."));
 
-		// get_consultation_status already downloaded the prescription/invoice
-		// synchronously the moment it saw `completed` -- this pause is cosmetic,
-		// matching the mocked flow's two-step wrap-up, not a real second wait.
-		setTimeout(() => {
-			flow.modal_body.html(`
-				<div style="padding:8px;">
-					<div style="color:var(--green-600,#2e7d32);font-weight:600;margin-bottom:16px;">
-						&#10003; ${__("Consultation completed")}
-					</div>
-					<div style="font-weight:600;border-bottom:1px solid var(--border-color);padding-bottom:6px;margin-bottom:10px;">
-						${__("Prescription")}
-					</div>
-					<div class="text-muted" style="margin-bottom:16px;font-size:12px;">
-						${__("Shukhee currently returns a PDF prescription, not itemized medicine data -- open it to view details.")}
-					</div>
-					<button class="btn btn-primary btn-sm shukhee-view-rx-btn" ${data.prescription_link ? "" : "disabled"}>
-						${__("View Prescription")}
-					</button>
-					${data.invoice_link ? `<a href="${data.invoice_link}" target="_blank" class="btn btn-default btn-sm" style="margin-left:6px;">${__("Invoice")}</a>` : ""}
+		// No artificial delay here -- by the time _on_terminal fires, the outer
+		// status is genuinely "completed" and get_consultation_status has
+		// already downloaded the prescription/invoice synchronously the moment
+		// it first observed that status (see api/consultation.py), so there's
+		// nothing left to wait for.
+		flow.modal_body.html(`
+			<div style="padding:8px;">
+				<div style="color:var(--green-600,#2e7d32);font-weight:600;margin-bottom:16px;">
+					&#10003; ${__("Consultation completed")}
 				</div>
-			`);
-			flow.$wrapper.find(".shukhee-view-rx-btn").on("click", () => {
-				window.open(data.prescription_link, "_blank");
-			});
-		}, 1200);
+				<div style="font-weight:600;border-bottom:1px solid var(--border-color);padding-bottom:6px;margin-bottom:10px;">
+					${__("Prescription")}
+				</div>
+				<div class="text-muted" style="margin-bottom:16px;font-size:12px;">
+					${__("Shukhee currently returns a PDF prescription, not itemized medicine data -- open it to view details.")}
+				</div>
+				<button class="btn btn-primary btn-sm shukhee-view-rx-btn" ${data.prescription_link ? "" : "disabled"}>
+					${__("View Prescription")}
+				</button>
+				${data.invoice_link ? `<a href="${data.invoice_link}" target="_blank" class="btn btn-default btn-sm" style="margin-left:6px;">${__("Invoice")}</a>` : ""}
+				${this._render_clinical_data_html(data.clinical_data)}
+			</div>
+		`);
+		flow.$wrapper.find(".shukhee-view-rx-btn").on("click", () => {
+			window.open(data.prescription_link, "_blank");
+		});
+	},
+
+	// Renders Shukhee's appointment.clinicalData (diagnosis, medicines,
+	// meal instructions, vitals, follow-up) -- captured server-side once the
+	// consultation completes (see api/consultation.py's get_consultation_status).
+	// Returns "" when absent (a consultation completed before this field was
+	// captured, or one Shukhee genuinely returned nothing for).
+	_render_clinical_data_html(clinicalData) {
+		if (!clinicalData) return "";
+
+		const bullets = (label, items) => {
+			if (!items || !items.length) return "";
+			return `<div style="margin-top:10px;">
+				<div style="font-weight:600;font-size:12px;">${frappe.utils.escape_html(label)}</div>
+				<div style="font-size:12px;">${items.map((i) => frappe.utils.escape_html(String(i))).join(", ")}</div>
+			</div>`;
+		};
+
+		const medicineRows = (clinicalData.medicine || [])
+			.map((m) => {
+				const name = m.brandName || m.genericName || "";
+				const details = [m.strength, m.dosage, m.frequency, m.instruction].filter(Boolean).join(" · ");
+				return `<div>${frappe.utils.escape_html(name)}${details ? " — " + frappe.utils.escape_html(details) : ""}</div>`;
+			})
+			.join("");
+
+		const mealRows = (clinicalData.mealInstruction || [])
+			.map((m) => {
+				const label = [m.mealType, m.instruction].filter(Boolean).join(": ");
+				return `<div>${frappe.utils.escape_html(label)}</div>`;
+			})
+			.join("");
+
+		const vital = clinicalData.lastVital || {};
+		const vitalParts = [
+			vital.temperature ? `${vital.temperature}°` : null,
+			vital.pulseRate ? `${vital.pulseRate} bpm` : null,
+			vital.bloodPressure ? `${vital.bloodPressure} mmHg` : null,
+			vital.spo2 ? `SpO2 ${vital.spo2}%` : null,
+		].filter(Boolean);
+
+		const followUpParts = [clinicalData.followUpComment, clinicalData.followUpDay, clinicalData.followUpDate].filter(
+			Boolean
+		);
+
+		return `
+			<div style="margin-top:16px;border-top:1px solid var(--border-color);padding-top:10px;">
+				<div style="font-weight:600;border-bottom:1px solid var(--border-color);padding-bottom:6px;margin-bottom:6px;">
+					${__("Doctor's Summary")}
+				</div>
+				${bullets(__("Chief Complaints"), clinicalData.chiefComplaints)}
+				${bullets(__("Diagnosis"), clinicalData.diagnosis)}
+				${bullets(__("Lab Tests"), clinicalData.labTest)}
+				${bullets(__("Advice"), clinicalData.advice)}
+				${bullets(__("Drug History"), clinicalData.drugHistory)}
+				${
+					medicineRows
+						? `<div style="margin-top:10px;"><div style="font-weight:600;font-size:12px;">${__("Medicines")}</div><div style="font-size:12px;">${medicineRows}</div></div>`
+						: ""
+				}
+				${
+					mealRows
+						? `<div style="margin-top:10px;"><div style="font-weight:600;font-size:12px;">${__("Meal Instructions")}</div><div style="font-size:12px;">${mealRows}</div></div>`
+						: ""
+				}
+				${
+					vitalParts.length
+						? `<div style="margin-top:10px;"><div style="font-weight:600;font-size:12px;">${__("Vitals Recorded by Doctor")}</div><div style="font-size:12px;">${frappe.utils.escape_html(vitalParts.join(" · "))}</div></div>`
+						: ""
+				}
+				${
+					followUpParts.length
+						? `<div style="margin-top:10px;"><div style="font-weight:600;font-size:12px;">${__("Follow-up")}</div><div style="font-size:12px;">${frappe.utils.escape_html(followUpParts.join(" · "))}</div></div>`
+						: ""
+				}
+			</div>
+		`;
 	},
 
 	_render_loading(flow, title, subtitle) {

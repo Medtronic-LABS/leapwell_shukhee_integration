@@ -136,8 +136,36 @@ class _FakeShukheeApi:
 				"specialty": {"title": "General Medicine"},
 				"working_at": "Test Clinic",
 			}
+			# 4-phase appointment lifecycle: the OUTER status stays "accepted" through
+			# Scheduled -> ConsultationStarted -> ConsultationEnd, only becoming
+			# "completed" once the appointment itself reaches Completed -- mirrors the
+			# real vendor's two independent status vocabularies (see api/consultation.py).
 			if self.poll_count == 1:
-				return self._resp(200, {"data": {"status": "accepted", "doctor": doctor}})
+				return self._resp(
+					200, {"data": {"status": "accepted", "doctor": doctor, "appointment": {"status": "Scheduled"}}}
+				)
+			if self.poll_count == 2:
+				return self._resp(
+					200,
+					{
+						"data": {
+							"status": "accepted",
+							"doctor": doctor,
+							"appointment": {"status": "ConsultationStarted"},
+						}
+					},
+				)
+			if self.poll_count == 3:
+				return self._resp(
+					200,
+					{
+						"data": {
+							"status": "accepted",
+							"doctor": doctor,
+							"appointment": {"status": "ConsultationEnd"},
+						}
+					},
+				)
 			return self._resp(
 				200,
 				{
@@ -145,8 +173,13 @@ class _FakeShukheeApi:
 						"status": "completed",
 						"doctor": doctor,
 						"appointment": {
+							"status": "Completed",
 							"prescriptionLink": "https://vendor.example/presigned/rx.pdf",
 							"invoiceLink": "https://vendor.example/presigned/inv.pdf",
+							"clinicalData": {
+								"diagnosis": ["Fever of other or unknown origin"],
+								"advice": ["take rest", "drink plenty of water"],
+							},
 						},
 					}
 				},
@@ -293,22 +326,43 @@ class TestConsultationLifecycle(unittest.TestCase):
 
 		call_log = frappe.get_doc("Call Logs", call_log_name)
 		self.assertEqual(call_log.status, "pending")
-		self.assertEqual(call_log.patient_id, "sk-patient-lifecycle-1")
+		self.assertEqual(call_log.shukhee_patient_id, "sk-patient-lifecycle-1")
 		self.assertEqual(call_log.request_id, "req-lifecycle-1")
 		self.assertEqual(call_log.transaction_id, "txn-lifecycle-1")
 
-		# ── Step 2: first poll -- doctor assigned before completion ────────
+		# ── Step 2: first poll -- doctor assigned before consultation starts ──
 		status_1 = self._poll(call_log_name)
 		self.assertEqual(status_1["status"], "accepted")
 		self.assertEqual(status_1["doctor_name"], "Dr. Lifecycle")
+		self.assertEqual(status_1["appointment_status"], "Scheduled")
+		self.assertIsNone(status_1["clinical_data"])
 		self.assertIsNone(status_1["prescription_link"])
 
-		# ── Step 3: second poll -- completed, documents captured ───────────
+		# ── Step 2b: appointment status reaches ConsultationStarted -- this is
+		# what gates showing the live call view client-side (mobile/desk).
+		status_1b = self._poll(call_log_name)
+		self.assertEqual(status_1b["status"], "accepted")
+		self.assertEqual(status_1b["appointment_status"], "ConsultationStarted")
+		self.assertIsNone(status_1b["clinical_data"])
+
+		# ── Step 2c: ConsultationEnd -- real "prescription in progress" wait
+		# state client-side, still no clinical_data yet (outer status not completed).
+		status_1c = self._poll(call_log_name)
+		self.assertEqual(status_1c["status"], "accepted")
+		self.assertEqual(status_1c["appointment_status"], "ConsultationEnd")
+		self.assertIsNone(status_1c["clinical_data"])
+
+		# ── Step 3: fourth poll -- completed, documents + clinical data captured
 		status_2 = self._poll(call_log_name)
 		self.assertEqual(status_2["status"], "completed")
+		self.assertEqual(status_2["appointment_status"], "Completed")
 		self.assertIsNotNone(status_2["prescription_link"])
 		self.assertIsNotNone(status_2["invoice_link"])
 		self.assertNotIn("vendor.example", status_2["prescription_link"])  # re-hosted, not the vendor's own link
+		self.assertEqual(
+			status_2["clinical_data"],
+			{"diagnosis": ["Fever of other or unknown origin"], "advice": ["take rest", "drink plenty of water"]},
+		)
 
 		# ── Step 4: further polls short-circuit -- no additional vendor call
 		polls_so_far = self._api.poll_count
@@ -316,6 +370,7 @@ class TestConsultationLifecycle(unittest.TestCase):
 		self.assertEqual(self._api.poll_count, polls_so_far)
 		self.assertEqual(status_3["status"], "completed")
 		self.assertEqual(status_3["prescription_link"], status_2["prescription_link"])
+		self.assertEqual(status_3["clinical_data"], status_2["clinical_data"])
 
 		# ── Step 5: get_prescription reads back the same cached links ──────
 		with _LocalAttr("remote_user_id", self.PROVIDER_USERNAME):
@@ -337,8 +392,9 @@ class TestConsultationLifecycle(unittest.TestCase):
 		self.assertIn(b"%INVOICE", base64.b64decode(invoice_doc["content_base64"]))
 
 		# ── Step 7: the vendor Bearer token was fetched once and reused ─────
-		# across booking + 3 polls + prescription + 2 downloads (7 authenticated
-		# calls in total), not re-logged-in on every request.
+		# across booking + 5 polls (Scheduled/ConsultationStarted/ConsultationEnd/
+		# Completed, plus one cached short-circuit) + prescription + 2 downloads,
+		# not re-logged-in on every request.
 		self.assertEqual(self._api.login_call_count(), 1)
 
 	def test_get_prescription_before_completion_raises(self):
@@ -350,7 +406,9 @@ class TestConsultationLifecycle(unittest.TestCase):
 	def test_download_document_denies_a_different_provider(self):
 		booking = self._start_consultation(contact_number="01710000003")
 		call_log_name = booking["call_log"]
-		self._poll(call_log_name)  # -> accepted
+		self._poll(call_log_name)  # -> accepted, appointment Scheduled
+		self._poll(call_log_name)  # -> appointment ConsultationStarted
+		self._poll(call_log_name)  # -> appointment ConsultationEnd
 		self._poll(call_log_name)  # -> completed, prescription captured
 
 		with self.assertRaises(frappe.PermissionError):
@@ -362,13 +420,15 @@ class TestConsultationLifecycle(unittest.TestCase):
 	def test_terminal_status_is_never_re_polled_even_across_repeated_calls(self):
 		booking = self._start_consultation(contact_number="01710000004")
 		call_log_name = booking["call_log"]
-		self._poll(call_log_name)  # -> accepted (poll_count=1)
-		self._poll(call_log_name)  # -> completed (poll_count=2)
+		self._poll(call_log_name)  # -> accepted, Scheduled (poll_count=1)
+		self._poll(call_log_name)  # -> ConsultationStarted (poll_count=2)
+		self._poll(call_log_name)  # -> ConsultationEnd (poll_count=3)
+		self._poll(call_log_name)  # -> completed, Completed (poll_count=4)
 
 		for _ in range(5):
 			self._poll(call_log_name)
 
-		self.assertEqual(self._api.poll_count, 2)
+		self.assertEqual(self._api.poll_count, 4)
 
 
 if __name__ == "__main__":
