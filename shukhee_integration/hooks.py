@@ -12,13 +12,14 @@ app_license = "gpl-3.0"
 required_apps = ["spice_next_core"]
 
 # frappe_theme (a spice_next_core dependency, so always present) reads the
-# sva_ft Property Setter on Call Logs.sva_audit_log to render its connected
-# Shukhee Call Audit Log rows in the Audit Log tab, no custom JS needed --
-# same convention spice_next_core uses pervasively for its own connections.
-# Filtered to just this doctype's own property setters, not every sva_ft on
-# the site.
+# sva_ft Property Setter on Call Logs.sva_audit_log to render the "Shukhee
+# Call Audit Timeline" Custom HTML Block (see shukhee_integration/api/audit.py
+# for the whitelisted method it calls) in the Audit Log tab. Filtered to just
+# this doctype's own property setters / this app's own block, not every
+# sva_ft or Custom HTML Block on the site.
 fixtures = [
 	{"dt": "Property Setter", "filters": [["doc_type", "in", ["Call Logs"]]]},
+	{"dt": "Custom HTML Block", "filters": [["name", "in", ["Shukhee Call Audit Timeline"]]]},
 ]
 
 # Each item in the list will be shown as an app in the apps page
@@ -149,13 +150,23 @@ fixtures = [
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+# Call Logs is mutable (status/appointment_status/clinical_data fill in over
+# time via polling) -- deliberately NOT wired with an append-only reject_mutation
+# guard like Encounter/Observation. before_insert denormalizes geography_node
+# (drives sync.pull's catchment filter); after_insert/on_update stamp sync_seq
+# (drives sync.pull's cursor) via spice_next_core's shared counter -- safe to
+# call cross-app since shukhee_integration already depends on spice_next_core
+# (required_apps above, and api/consultation.py already imports from it).
+# Call Logs is pull-only in _SYNCABLE_DOCTYPES -- there is no offline-authored
+# push path for it (booking always requires a live vendor round-trip), so no
+# push-side hook (client_uuid/Sync Op Log) is needed here.
+doc_events = {
+	"Call Logs": {
+		"before_insert": "shukhee_integration.hooks_impl.set_call_logs_geography_node",
+		"after_insert": "spice_next_core.hooks_impl.advance_sync_seq",
+		"on_update": "spice_next_core.hooks_impl.advance_sync_seq",
+	},
+}
 
 # Scheduled Tasks
 # ---------------
