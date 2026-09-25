@@ -95,7 +95,15 @@ def _request(method, url, *, raise_on_401=False, **kwargs):
 		frappe.log_error(
 			frappe.get_traceback(), f"Shukhee API call failed: {method} {url} -- {detail}"
 		)
-		frappe.throw(_("Shukhee API call failed: {0} -- {1}").format(str(e), detail), frappe.ValidationError)
+		# Shukhee's own error responses carry a clean, human-readable `message`
+		# field (e.g. "Invalid Bangladeshi mobile number") -- surface THAT alone
+		# as the user-facing error when present, instead of the full technical
+		# dump (raw HTTPError string + entire response dict), which is unreadable
+		# noise to an SK. Full detail is still captured in the Error Log/audit
+		# trail above for debugging -- this only changes what reaches the user.
+		vendor_message = detail.get("message") if isinstance(detail, dict) else None
+		user_message = vendor_message or _("Shukhee API call failed: {0} -- {1}").format(str(e), detail)
+		frappe.throw(user_message, frappe.ValidationError)
 	except requests.RequestException as e:
 		status = "Failed"
 		error = str(e)
