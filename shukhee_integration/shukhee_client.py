@@ -108,7 +108,16 @@ def _request(method, url, *, raise_on_401=False, **kwargs):
 		status = "Failed"
 		error = str(e)
 		frappe.log_error(frappe.get_traceback(), f"Shukhee API call failed: {method} {url}")
-		frappe.throw(_("Shukhee API call failed: {0}").format(str(e)), frappe.ValidationError)
+		# requests.RequestException (timeout/connection-refused/DNS/SSL) has no
+		# JSON body to extract a clean vendor message from -- str(e) is a raw,
+		# multi-line technical string (e.g. HTTPSConnectionPool(...): Max retries
+		# exceeded...), unreadable noise to an SK. Same principle as the HTTPError
+		# branch above: a clean, generic, actionable message for the user; the
+		# real exception is still fully captured via log_error.
+		frappe.throw(
+			_("Could not reach Shukhee. Check your connection and try again."),
+			frappe.ValidationError,
+		)
 	finally:
 		audit.log_call(
 			direction="Outbound",

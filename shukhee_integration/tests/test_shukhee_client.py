@@ -302,6 +302,30 @@ class TestRequestAuditLogging(unittest.TestCase):
 
 	@patch("shukhee_integration.audit.log_call")
 	@patch("requests.request")
+	def test_connection_error_surfaces_a_clean_generic_message_not_the_raw_exception(
+		self, mock_request, mock_log_call
+	):
+		"""requests.RequestException (timeout/connection-refused/DNS/SSL) has no JSON
+		body to extract a vendor message from -- str(e) is a raw, unreadable technical
+		string. Must not reach the user verbatim."""
+		import requests as requests_module
+
+		mock_request.side_effect = requests_module.ConnectionError(
+			"HTTPSConnectionPool(host='dev-api.grameendhs.com', port=443): Max retries exceeded"
+		)
+
+		with self.assertRaises(frappe.ValidationError) as ctx:
+			shukhee_client._request("POST", "https://x/y", json={"a": 1})
+
+		self.assertEqual(
+			str(ctx.exception), "Could not reach Shukhee. Check your connection and try again."
+		)
+		mock_log_call.assert_called_once()
+		_, kwargs = mock_log_call.call_args
+		self.assertEqual(kwargs["status"], "Failed")
+
+	@patch("shukhee_integration.audit.log_call")
+	@patch("requests.request")
 	def test_401_with_raise_on_401_logs_and_raises_internal_signal(self, mock_request, mock_log_call):
 		import requests as requests_module
 
