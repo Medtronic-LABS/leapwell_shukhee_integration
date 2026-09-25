@@ -2,11 +2,14 @@
 Tests for Call Logs' participation in spice_next_core.api.sync.pull: sync_seq
 stamping on insert/update, geography_node denormalization from the linked
 Patient's household (drives catchment filtering), catchment filtering itself,
-and that clinical_data/medias serialize correctly through the generic
-_serialize_change path (doc.as_dict()) -- exercised against REAL Frappe DB
-records, the same "real DB, not mocks" layer as test_consultation_lifecycle.py,
-since this is exactly the kind of cross-cutting (doctype metadata + hooks +
-Postgres JSON auto-deserialize) behavior a mocked unit test would not catch.
+uhis_user-scoping (a pulling SK's own calls, OR'd alongside geography -- see
+test_uhis_user_scoping_* below, added because `patient`/`geography_node` are
+null on every call the mobile app books today), and that clinical_data/medias
+serialize correctly through the generic _serialize_change path (doc.as_dict())
+-- exercised against REAL Frappe DB records, the same "real DB, not mocks"
+layer as test_consultation_lifecycle.py, since this is exactly the kind of
+cross-cutting (doctype metadata + hooks + Postgres JSON auto-deserialize)
+behavior a mocked unit test would not catch.
 
 Call Logs has no offline-authored push path (booking always requires a live
 vendor round trip) -- push() never consults _SYNCABLE_DOCTYPES at all (confirmed
@@ -26,11 +29,30 @@ class TestCallLogsSync(unittest.TestCase):
 	def setUp(self):
 		suffix = uuid.uuid4().hex[:8]
 
+		self.session_user = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": f"test.synclogs.user.{suffix}@shukhee.test",
+				"first_name": "Sync Test SK",
+				"send_welcome_email": 0,
+			}
+		).insert(ignore_permissions=True)
+
 		self.provider = frappe.get_doc(
 			{
 				"doctype": "Provider",
 				"username": f"test.synclogs.provider.{suffix}@shukhee.test",
 				"full_name": "Sync Test Provider",
+				"user": self.session_user.name,
+			}
+		).insert(ignore_permissions=True)
+		# A second SK's Provider record -- used to confirm uhis_user-scoping
+		# excludes another SK's calls, not just includes the caller's own.
+		self.other_provider = frappe.get_doc(
+			{
+				"doctype": "Provider",
+				"username": f"test.synclogs.other.{suffix}@shukhee.test",
+				"full_name": "Sync Test Other Provider",
 			}
 		).insert(ignore_permissions=True)
 
@@ -77,6 +99,7 @@ class TestCallLogsSync(unittest.TestCase):
 		self._call_logs = []
 
 	def tearDown(self):
+		frappe.set_user("Administrator")
 		for name in self._call_logs:
 			frappe.delete_doc("Call Logs", name, force=True, ignore_permissions=True)
 		frappe.delete_doc("Patient", self.patient_in.name, force=True, ignore_permissions=True)
@@ -86,6 +109,8 @@ class TestCallLogsSync(unittest.TestCase):
 		frappe.delete_doc("Geography Node", self.geo_in.name, force=True, ignore_permissions=True)
 		frappe.delete_doc("Geography Node", self.geo_out.name, force=True, ignore_permissions=True)
 		frappe.delete_doc("Provider", self.provider.name, force=True, ignore_permissions=True)
+		frappe.delete_doc("Provider", self.other_provider.name, force=True, ignore_permissions=True)
+		frappe.delete_doc("User", self.session_user.name, force=True, ignore_permissions=True)
 		frappe.db.commit()
 
 	def _make_call_log(self, patient=None, **overrides):
@@ -147,6 +172,68 @@ class TestCallLogsSync(unittest.TestCase):
 
 		self.assertIn(doc_in.name, names)
 		self.assertNotIn(doc_out.name, names)
+
+	def test_uhis_user_scoping_shows_own_calls_even_without_geography_catchment(self):
+		"""patient/geography_node are unreliable today (see module docstring) --
+		uhis_user is stamped unconditionally on every booking, so a pulling SK's
+		own calls must be visible even with an empty geography catchment (a
+		Provider record with no assigned ward/facility)."""
+		doc = self._make_call_log()  # uhis_user=self.provider.name, no patient
+		frappe.set_user(self.session_user.name)
+		rows = _changes_since(cursor=doc.sync_seq - 1, catchment=set(), limit=100)
+		frappe.set_user("Administrator")
+
+		names = [r["name"] for r in rows if r["doctype"] == "Call Logs"]
+		self.assertIn(doc.name, names)
+
+	def test_uhis_user_scoping_excludes_another_sks_calls(self):
+		mine = self._make_call_log()
+		theirs = self._make_call_log(uhis_user=self.other_provider.name)
+
+		frappe.set_user(self.session_user.name)
+		cursor = min(mine.sync_seq, theirs.sync_seq) - 1
+		rows = _changes_since(cursor=cursor, catchment=set(), limit=100)
+		frappe.set_user("Administrator")
+
+		names = [r["name"] for r in rows if r["doctype"] == "Call Logs"]
+		self.assertIn(mine.name, names)
+		self.assertNotIn(theirs.name, names)
+
+	def test_uhis_user_scoping_is_ored_with_geography_catchment_not_a_replacement(self):
+		"""A call outside the pulling SK's geography catchment, but created by
+		that same SK, must still be visible -- uhis_user is an additional OR
+		condition alongside geography, not a replacement of it."""
+		doc = self._make_call_log(patient=self.patient_out.name)  # out-of-catchment
+
+		frappe.set_user(self.session_user.name)
+		rows = _changes_since(cursor=doc.sync_seq - 1, catchment={self.geo_in.name}, limit=100)
+		frappe.set_user("Administrator")
+
+		names = [r["name"] for r in rows if r["doctype"] == "Call Logs"]
+		self.assertIn(doc.name, names)
+
+	def test_no_provider_for_session_user_sees_no_call_logs_when_catchment_scoped(self):
+		"""A session user with no Provider record at all (and a non-None,
+		i.e. non-System-Manager, catchment) must see no Call Logs -- neither
+		geography nor uhis_user has anything to match."""
+		self._make_call_log(patient=self.patient_in.name)
+
+		orphan_user = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": f"test.synclogs.orphan.{uuid.uuid4().hex[:8]}@shukhee.test",
+				"first_name": "No Provider",
+				"send_welcome_email": 0,
+			}
+		).insert(ignore_permissions=True)
+		try:
+			frappe.set_user(orphan_user.name)
+			rows = _changes_since(cursor=0, catchment=set(), limit=100)
+			names = [r["name"] for r in rows if r["doctype"] == "Call Logs"]
+			self.assertEqual(names, [])
+		finally:
+			frappe.set_user("Administrator")
+			frappe.delete_doc("User", orphan_user.name, force=True, ignore_permissions=True)
 
 	def test_clinical_data_always_serializes_as_a_json_string_via_as_dict(self):
 		"""Real, verified behavior (not an assumption): frappe.get_doc(...).clinical_data
