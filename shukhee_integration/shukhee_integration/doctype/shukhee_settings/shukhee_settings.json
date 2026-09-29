@@ -5,7 +5,9 @@
  "engine": "InnoDB",
  "field_order": [
   "base_url",
-  "video_call_base_url"
+  "video_call_base_url",
+  "consents_section",
+  "consents_html"
  ],
  "fields": [
   {
@@ -22,6 +24,17 @@
    "fieldtype": "Data",
    "label": "Video Call Base URL",
    "reqd": 1
+  },
+  {
+   "fieldname": "consents_section",
+   "fieldtype": "Section Break",
+   "label": "Consents"
+  },
+  {
+   "description": "Never read by the mobile API -- exists only so the Desk UI can embed a live grid of Shukhee Consent rows via this field's sva_ft Property Setter (Custom grid: Consents).",
+   "fieldname": "consents_html",
+   "fieldtype": "HTML",
+   "label": "Consents"
   }
  ],
  "issingle": 1,
