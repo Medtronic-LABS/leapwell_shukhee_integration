@@ -32,6 +32,7 @@ from shukhee_integration.api import consultation
 get_specialities = inspect.unwrap(consultation.get_specialities)
 start_consultation = inspect.unwrap(consultation.start_consultation)
 get_consultation_status = inspect.unwrap(consultation.get_consultation_status)
+attach_fhir_encounter_id = inspect.unwrap(consultation.attach_fhir_encounter_id)
 get_prescription = inspect.unwrap(consultation.get_prescription)
 download_document = inspect.unwrap(consultation.download_document)
 
@@ -122,6 +123,7 @@ class TestSpiceNextCoreIntegration(unittest.TestCase):
 			consultation.get_specialities,
 			consultation.start_consultation,
 			consultation.get_consultation_status,
+			consultation.attach_fhir_encounter_id,
 			consultation.get_prescription,
 			consultation.download_document,
 		):
@@ -138,6 +140,7 @@ class TestSpiceNextCoreIntegration(unittest.TestCase):
 			consultation.get_specialities,
 			consultation.start_consultation,
 			consultation.get_consultation_status,
+			consultation.attach_fhir_encounter_id,
 			consultation.get_prescription,
 			consultation.download_document,
 		):
@@ -150,7 +153,7 @@ class TestSpiceNextCoreIntegration(unittest.TestCase):
 
 
 class TestAuditInboundWiring(unittest.TestCase):
-	"""Confirms audit_inbound is wired to exactly the 4 call-related endpoints, not
+	"""Confirms audit_inbound is wired to exactly the 5 call-related endpoints, not
 	get_specialities (excluded -- it has no call context, see audit.py's docstring).
 
 	functools.wraps sets __wrapped__ on every decorator layer that uses it, so
@@ -171,6 +174,7 @@ class TestAuditInboundWiring(unittest.TestCase):
 		for fn in (
 			consultation.start_consultation,
 			consultation.get_consultation_status,
+			consultation.attach_fhir_encounter_id,
 			consultation.get_prescription,
 			consultation.download_document,
 		):
@@ -740,6 +744,50 @@ class TestGetConsultationStatus(unittest.TestCase):
 		self.assertEqual(len(clinical_data_calls), 1)
 		self.assertIsInstance(clinical_data_calls[0].args[3], str)
 		self.assertEqual(json.loads(clinical_data_calls[0].args[3]), result["clinical_data"])
+
+
+class TestAttachFhirEncounterId(unittest.TestCase):
+
+	def test_missing_call_log_raises(self):
+		with self.assertRaises(frappe.ValidationError):
+			attach_fhir_encounter_id(payload='{"fhir_encounter_id": "enc-1"}')
+
+	def test_missing_fhir_encounter_id_raises(self):
+		with self.assertRaises(frappe.ValidationError):
+			attach_fhir_encounter_id(payload='{"call_log": "CL-1"}')
+
+	@patch("frappe.db.exists")
+	def test_unknown_call_log_is_a_no_op(self, mock_exists):
+		mock_exists.return_value = False
+		result = attach_fhir_encounter_id(
+			payload='{"call_log": "CL-missing", "fhir_encounter_id": "enc-1"}'
+		)
+		self.assertEqual(result, {"attached": False})
+
+	@patch("frappe.db.commit")
+	@patch("frappe.db.set_value")
+	@patch("frappe.db.exists")
+	def test_known_call_log_is_stamped(self, mock_exists, mock_set_value, mock_commit):
+		mock_exists.return_value = True
+		result = attach_fhir_encounter_id(
+			payload='{"call_log": "CL-1", "fhir_encounter_id": "enc-1"}'
+		)
+		self.assertEqual(result, {"attached": True})
+		mock_set_value.assert_called_once_with("Call Logs", "CL-1", "fhir_encounter_id", "enc-1")
+		mock_commit.assert_called_once()
+
+	@patch("frappe.db.commit")
+	@patch("frappe.db.set_value")
+	@patch("frappe.db.exists")
+	def test_idempotent_on_repeat_calls(self, mock_exists, mock_set_value, mock_commit):
+		"""Safe to call twice (e.g. a retried sync pass) -- last write wins, no error."""
+		mock_exists.return_value = True
+		for _ in range(2):
+			result = attach_fhir_encounter_id(
+				payload='{"call_log": "CL-1", "fhir_encounter_id": "enc-1"}'
+			)
+			self.assertEqual(result, {"attached": True})
+		self.assertEqual(mock_set_value.call_count, 2)
 
 
 class TestGetPrescription(unittest.TestCase):

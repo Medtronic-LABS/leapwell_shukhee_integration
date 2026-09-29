@@ -18,6 +18,7 @@
   "geography_node",
   "request_section",
   "encounter_id",
+  "fhir_encounter_id",
   "reason",
   "request_column_break",
   "speciality_id",
@@ -127,6 +128,13 @@
    "fieldtype": "Data",
    "label": "Encounter ID",
    "description": "Optional identifier supplied by the app; no FK, carried through for later correlation to the visit."
+  },
+  {
+   "fieldname": "fhir_encounter_id",
+   "fieldtype": "Data",
+   "label": "FHIR Encounter ID",
+   "read_only": 1,
+   "description": "Server-assigned FHIR Encounter id for the visit this call was booked from -- attached after the fact, once the mobile app's own assessment-history sync learns it (see shukhee_integration.api.consultation.attach_fhir_encounter_id). Null until then; unrelated to encounter_id, which is the app's own client-minted visit id sent at booking time."
   },
   {
    "fieldname": "reason",
