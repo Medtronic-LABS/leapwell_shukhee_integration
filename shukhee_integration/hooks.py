@@ -14,11 +14,13 @@ required_apps = ["spice_next_core"]
 # frappe_theme (a spice_next_core dependency, so always present) reads the
 # sva_ft Property Setter on Call Logs.sva_audit_log to render the "Shukhee
 # Call Audit Timeline" Custom HTML Block (see shukhee_integration/api/audit.py
-# for the whitelisted method it calls) in the Audit Log tab. Filtered to just
-# this doctype's own property setters / this app's own block, not every
-# sva_ft or Custom HTML Block on the site.
+# for the whitelisted method it calls) in the Audit Log tab. Shukhee
+# Settings.consents_html carries its own sva_ft Property Setter too, embedding
+# a live grid of Shukhee Consent rows. Filtered to just these doctypes' own
+# property setters / this app's own block, not every sva_ft or Custom HTML
+# Block on the site.
 fixtures = [
-	{"dt": "Property Setter", "filters": [["doc_type", "in", ["Call Logs"]]]},
+	{"dt": "Property Setter", "filters": [["doc_type", "in", ["Call Logs", "Shukhee Settings"]]]},
 	{"dt": "Custom HTML Block", "filters": [["name", "in", ["Shukhee Call Audit Timeline"]]]},
 ]
 

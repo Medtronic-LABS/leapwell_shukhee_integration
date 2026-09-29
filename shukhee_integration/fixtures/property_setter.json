@@ -8,5 +8,15 @@
   "property": "sva_ft",
   "property_type": "JSON",
   "value": "{\"property_type\": \"Custom HTML Block\", \"html_block\": \"Shukhee Call Audit Timeline\"}"
+ },
+ {
+  "doctype": "Property Setter",
+  "name": "Shukhee Settings-consents_html-sva_ft",
+  "doctype_or_field": "DocField",
+  "doc_type": "Shukhee Settings",
+  "field_name": "consents_html",
+  "property": "sva_ft",
+  "property_type": "JSON",
+  "value": "{\"property_type\": \"DocType (Direct)\", \"connection_type\": \"Direct\", \"link_doctype\": \"Shukhee Consent\", \"link_fieldname\": \"shukhee_settings\", \"title\": \"Consents\", \"crud_permissions\": \"[\\\"read\\\", \\\"write\\\", \\\"create\\\", \\\"delete\\\"]\", \"listview_settings\": \"[{\\\"fieldname\\\": \\\"lng\\\", \\\"fieldtype\\\": \\\"Select\\\", \\\"label\\\": \\\"Language\\\", \\\"width\\\": 2, \\\"inline_edit\\\": 0, \\\"sticky\\\": 0, \\\"wrap\\\": 0, \\\"color\\\": \\\"\\\", \\\"bg_color\\\": \\\"\\\"}, {\\\"fieldname\\\": \\\"consent\\\", \\\"fieldtype\\\": \\\"HTML\\\", \\\"label\\\": \\\"Consent\\\", \\\"width\\\": 4, \\\"inline_edit\\\": 0, \\\"sticky\\\": 0, \\\"wrap\\\": 0, \\\"color\\\": \\\"\\\", \\\"bg_color\\\": \\\"\\\"}]\", \"add_row_button_label\": \"Add Consent\", \"allow_export\": 1, \"full_screen_dialog\": 1, \"redirect_to_main_form\": 0, \"disable_workflow\": 1}"
  }
 ]
