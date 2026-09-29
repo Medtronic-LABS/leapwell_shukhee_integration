@@ -4,6 +4,7 @@ Consultation flow endpoints — video-consultation via the external Shukhee (SSK
   shukhee_integration.api.consultation.get_specialities          populates the booking form's speciality picker
   shukhee_integration.api.consultation.start_consultation        SK taps "Start Consultation"
   shukhee_integration.api.consultation.get_consultation_status    polled by the client
+  shukhee_integration.api.consultation.attach_fhir_encounter_id   called once the visit's own FHIR Encounter id is known
   shukhee_integration.api.consultation.get_prescription           "View Prescription" button
   shukhee_integration.api.consultation.download_document          fetches prescription/invoice bytes
 
@@ -320,6 +321,34 @@ def get_consultation_status(payload=None):
 		# comment above) -- never json.loads() it, even in this fallback.
 		"clinical_data": clinical_data if clinical_data else (doc.clinical_data or None),
 	}
+
+
+@whitelist(methods=["POST"], remote_auth=True)
+@audit_inbound
+def attach_fhir_encounter_id(payload=None):
+	"""Called once the mobile app's own offline-sync learns the FHIR Encounter id for the
+	visit a call was booked from (its own OfflineSyncService reconciles this the first time
+	the visit's assessment syncs -- see EncounterDao.findPendingDraftId). `encounter_id` (set
+	at booking time, see start_consultation) is a client-minted UUID that never reaches the
+	FHIR-backed platform; this durably attaches the FHIR-side id too, so the mobile app's
+	local Call Logs pull can still join a call back to its visit after a full local data wipe
+	or on a different device, without depending on any client-side reconciliation state.
+
+	Safe to call more than once or out of order -- last write wins, and an unknown call_log is
+	a no-op rather than an error, since the client can't distinguish "never attached" from "a
+	previous attempt succeeded but the response was lost" and must be free to simply retry."""
+	env = _resolve_env(payload)
+	call_log_name = env.get("call_log")
+	fhir_encounter_id = env.get("fhir_encounter_id")
+	if not call_log_name or not fhir_encounter_id:
+		frappe.throw(_("call_log and fhir_encounter_id are required."), frappe.ValidationError)
+
+	if not frappe.db.exists("Call Logs", call_log_name):
+		return {"attached": False}
+
+	frappe.db.set_value("Call Logs", call_log_name, "fhir_encounter_id", fhir_encounter_id)
+	frappe.db.commit()
+	return {"attached": True}
 
 
 @whitelist(methods=["POST"], remote_auth=True)
