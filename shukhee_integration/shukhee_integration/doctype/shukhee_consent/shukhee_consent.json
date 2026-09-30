@@ -7,6 +7,7 @@
  "field_order": [
   "lng",
   "consent",
+  "version",
   "shukhee_settings"
  ],
  "fields": [
@@ -24,6 +25,14 @@
    "fieldtype": "Text Editor",
    "label": "Consent",
    "reqd": 1
+  },
+  {
+   "default": "1",
+   "description": "Bumped whenever this row's `consent` copy is edited in the Desk UI, so a client can log which exact copy version the patient saw (see Shukhee Consent Log.consent_version) -- an edit here takes effect for the very next call (get_consent has no caching), so the version is what lets an audit trail distinguish which wording was actually shown.",
+   "fieldname": "version",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Version"
   },
   {
    "fieldname": "shukhee_settings",

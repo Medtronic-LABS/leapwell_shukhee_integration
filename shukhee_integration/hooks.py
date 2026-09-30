@@ -179,6 +179,11 @@ scheduler_events = {
 	],
 }
 
+# Shukhee Consent Log (shukhee_integration/shukhee_integration/doctype/shukhee_consent_log/)
+# deliberately gets NO purge job here, unlike Shukhee Call Audit Log's 180-day one above --
+# it's a legal consent record, not a debug/observability log, so it must persist for as long
+# as the underlying patient data does. See that doctype's controller docstring.
+
 # Testing
 # -------
 
