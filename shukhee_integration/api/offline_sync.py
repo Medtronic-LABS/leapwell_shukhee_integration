@@ -82,6 +82,7 @@ def create(payload=None):
 			member.get("referenceId"),
 			device_id,
 			lambda m=member: mobile_sync.upsert_member(m, device_id),
+			store_payload=member,
 		)
 	# assessments: NCD (Phase 3), the pregnancy-episode programmes (Phase 4),
 	# and CHILDHOOD_VISIT/ICCM/EYE_CARE/CATARACT/FAMILY_PLANNING (Phase 5) are
@@ -99,6 +100,7 @@ def create(payload=None):
 				assessment.get("referenceId"),
 				device_id,
 				lambda a=assessment: mobile_sync.process_ncd_assessment(a, device_id),
+				store_payload=assessment,
 			)
 		elif wire_type in mobile_sync.PREGNANCY_ASSESSMENT_TYPES:
 			_process_item(
@@ -107,6 +109,7 @@ def create(payload=None):
 				assessment.get("referenceId"),
 				device_id,
 				lambda a=assessment: mobile_sync.process_pregnancy_assessment(a, device_id),
+				store_payload=assessment,
 			)
 		elif wire_type in mobile_sync.OTHER_ASSESSMENT_TYPES:
 			_process_item(
@@ -115,6 +118,7 @@ def create(payload=None):
 				assessment.get("referenceId"),
 				device_id,
 				lambda a=assessment: mobile_sync.process_other_assessment(a, device_id),
+				store_payload=assessment,
 			)
 		else:
 			_record_not_yet_implemented(
@@ -194,16 +198,34 @@ def _process_household(batch, household_payload, device_id):
 				lambda m=member: mobile_sync.upsert_member(
 					m, device_id, household_client_uuid=household_name_holder["name"]
 				),
+				# Nested members have no household link of their own on the
+				# wire (the nesting IS the link) -- the reconciliation sweep
+				# needs household_client_uuid explicitly to replay this one
+				# later, since by then it can't re-derive it from context.
+				store_payload={"member": member, "householdClientUuid": household_name_holder["name"]},
 			)
 		return name
 
-	_process_item(batch, "Household", household_payload.get("referenceId"), device_id, _do)
+	_process_item(
+		batch,
+		"Household",
+		household_payload.get("referenceId"),
+		device_id,
+		_do,
+		store_payload=household_payload,
+	)
 
 
-def _process_item(batch, entity_type, reference_id, device_id, fn):
+def _process_item(batch, entity_type, reference_id, device_id, fn, *, store_payload=None):
 	"""Processes one entity synchronously under its own savepoint (so one bad
 	row never blocks the rest of the batch), or replays a prior result for
-	the same (device_id, entity_type, reference_id) without reprocessing."""
+	the same (device_id, entity_type, reference_id) without reprocessing.
+
+	[store_payload], when given, is persisted as this item's payload_json --
+	the daily reconciliation sweep (shukhee_integration.reconciliation.
+	reconcile_failed_items) replays it against the SAME fn-equivalent logic
+	for any row still Failed after `create` returns, which is what the
+	legacy offline-service's 3-retry-then-silent-failure queue never had."""
 	if reference_id is None:
 		return
 	reference_id = str(reference_id)
@@ -211,7 +233,7 @@ def _process_item(batch, entity_type, reference_id, device_id, fn):
 	prior = frappe.get_all(
 		"Offline Sync Item",
 		filters={"device_id": device_id, "entity_type": entity_type, "reference_id": reference_id},
-		fields=["status", "fhir_id", "error_message"],
+		fields=["status", "fhir_id", "error_message", "payload_json"],
 		order_by="creation desc",
 		limit=1,
 	)
@@ -226,9 +248,12 @@ def _process_item(batch, entity_type, reference_id, device_id, fn):
 				"status": row["status"],
 				"fhir_id": row["fhir_id"],
 				"error_message": row["error_message"],
+				"payload_json": row["payload_json"],
 			},
 		)
 		return
+
+	payload_json = frappe.as_json(store_payload) if store_payload is not None else None
 
 	# Prefixed so it's never a bare, digit-leading token -- Postgres parses an
 	# unquoted SAVEPOINT name as an identifier, and one starting with a digit
@@ -251,6 +276,7 @@ def _process_item(batch, entity_type, reference_id, device_id, fn):
 				"reference_id": reference_id,
 				"status": "Failed",
 				"error_message": frappe.get_traceback()[-140:],
+				"payload_json": payload_json,
 			},
 		)
 	else:
