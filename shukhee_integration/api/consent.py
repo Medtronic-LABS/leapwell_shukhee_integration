@@ -8,6 +8,9 @@ append-only record of the patient's actual Agree/Decline decision.
   shukhee_integration.api.consent.record_consent_decision    called once the patient has
                                                               Agreed/Declined, to append a
                                                               Shukhee Consent Log row.
+  shukhee_integration.api.consent.attach_consent_to_call     called once booking succeeds, to
+                                                              denormalize the accepted version
+                                                              onto the resulting Call Logs row.
 """
 
 import frappe
@@ -90,3 +93,36 @@ def record_consent_decision(payload=None):
 	frappe.db.commit()
 
 	return {"logged": True}
+
+
+@whitelist(methods=["POST"], remote_auth=True)
+@audit_inbound
+def attach_consent_to_call(payload=None):
+	"""Called once start_consultation's booking succeeds, to denormalize the consent version/
+	language the patient just agreed to onto the resulting Call Logs row -- the consent gate
+	runs before booking, so Call Logs doesn't exist yet at get_consent/record_consent_decision
+	time, and this is the first point afterward both are known. Every decision (including
+	declines, which never produce a Call Logs row at all) is already durably recorded in
+	Shukhee Consent Log by record_consent_decision above; this is only a convenience
+	denormalization so a specific call's accepted version is visible without cross-referencing
+	that log by visit_id.
+
+	Mirrors consultation.attach_fhir_encounter_id's exact posture: only call_log is required,
+	an unknown one is a no-op rather than an error (the client can't distinguish "never
+	attached" from "a previous attempt succeeded but the response was lost" and must be free
+	to simply retry), and a repeat call is safe (last write wins)."""
+	env = _resolve_env(payload)
+	call_log_name = env.get("call_log")
+	if not call_log_name:
+		frappe.throw(_("call_log is required."), frappe.ValidationError)
+
+	if not frappe.db.exists("Call Logs", call_log_name):
+		return {"attached": False}
+
+	frappe.db.set_value(
+		"Call Logs",
+		call_log_name,
+		{"consent_version": env.get("consent_version"), "consent_lng": env.get("lng")},
+	)
+	frappe.db.commit()
+	return {"attached": True}

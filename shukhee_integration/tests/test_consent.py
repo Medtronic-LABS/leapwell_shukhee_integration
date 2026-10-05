@@ -23,6 +23,7 @@ from shukhee_integration.api import consent
 
 get_consent = inspect.unwrap(consent.get_consent)
 record_consent_decision = inspect.unwrap(consent.record_consent_decision)
+attach_consent_to_call = inspect.unwrap(consent.attach_consent_to_call)
 
 
 class _LocalAttr:
@@ -211,6 +212,48 @@ class TestRecordConsentDecision(unittest.TestCase):
 		mock_current_provider.assert_called_once()
 		(doc_dict,), _kwargs = mock_get_doc.call_args
 		self.assertEqual(doc_dict["provider"], "PROV-REAL")
+
+
+class TestAttachConsentToCall(unittest.TestCase):
+
+	def test_missing_call_log_raises(self):
+		with self.assertRaises(frappe.ValidationError):
+			attach_consent_to_call(payload='{"consent_version": "2", "lng": "en"}')
+
+	@patch("frappe.db.exists")
+	def test_unknown_call_log_is_a_no_op(self, mock_exists):
+		mock_exists.return_value = False
+		result = attach_consent_to_call(
+			payload='{"call_log": "CL-missing", "consent_version": "2", "lng": "en"}'
+		)
+		self.assertEqual(result, {"attached": False})
+
+	@patch("frappe.db.commit")
+	@patch("frappe.db.set_value")
+	@patch("frappe.db.exists")
+	def test_known_call_log_is_stamped(self, mock_exists, mock_set_value, mock_commit):
+		mock_exists.return_value = True
+		result = attach_consent_to_call(
+			payload='{"call_log": "CL-1", "consent_version": "2", "lng": "en"}'
+		)
+		self.assertEqual(result, {"attached": True})
+		mock_set_value.assert_called_once_with(
+			"Call Logs", "CL-1", {"consent_version": "2", "consent_lng": "en"}
+		)
+		mock_commit.assert_called_once()
+
+	@patch("frappe.db.commit")
+	@patch("frappe.db.set_value")
+	@patch("frappe.db.exists")
+	def test_idempotent_on_repeat_calls(self, mock_exists, mock_set_value, mock_commit):
+		"""Safe to call twice (e.g. a retried attach) -- last write wins, no error."""
+		mock_exists.return_value = True
+		for _ in range(2):
+			result = attach_consent_to_call(
+				payload='{"call_log": "CL-1", "consent_version": "2", "lng": "en"}'
+			)
+			self.assertEqual(result, {"attached": True})
+		self.assertEqual(mock_set_value.call_count, 2)
 
 
 if __name__ == "__main__":
