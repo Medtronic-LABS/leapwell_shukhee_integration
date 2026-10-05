@@ -19,6 +19,8 @@
   "request_section",
   "encounter_id",
   "fhir_encounter_id",
+  "consent_version",
+  "consent_lng",
   "reason",
   "request_column_break",
   "speciality_id",
@@ -135,6 +137,22 @@
    "label": "FHIR Encounter ID",
    "read_only": 1,
    "description": "Server-assigned FHIR Encounter id for the visit this call was booked from -- attached after the fact, once the mobile app's own assessment-history sync learns it (see shukhee_integration.api.consultation.attach_fhir_encounter_id). Null until then; unrelated to encounter_id, which is the app's own client-minted visit id sent at booking time."
+  },
+  {
+   "fieldname": "consent_version",
+   "fieldtype": "Link",
+   "label": "Consent Version",
+   "options": "Shukhee Consent Version",
+   "read_only": 1,
+   "description": "The exact Shukhee Consent Version snapshot the patient saw before this call was booked -- attached after the fact (see shukhee_integration.api.consent.attach_consent_to_call), since the consent gate runs before Call Logs exists, trusted directly from the client's version_id (captured once at get_consent time), never re-resolved from Shukhee Consent (which keeps only the current, editable copy -- see that doctype's current_version field). Every consent decision (including declines, which never reach this doctype) is separately recorded in Shukhee Consent Log; this is just a convenience denormalization for viewing a specific call."
+  },
+  {
+   "fieldname": "consent_lng",
+   "fieldtype": "Select",
+   "label": "Consent Language",
+   "options": "\nen\nbn",
+   "read_only": 1,
+   "description": "The language the consent copy was shown in for this call."
   },
   {
    "fieldname": "reason",
