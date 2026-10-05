@@ -147,13 +147,13 @@ class TestOfflineSyncCreate(unittest.TestCase):
 		)
 
 	def test_unimplemented_entity_types_marked_failed_not_dropped(self):
-		# NCD is the one fully-translated programme (see test_create_processes_
-		# ncd_assessment_end_to_end below) -- ANC stays the not-yet-implemented
-		# stub for this test.
+		# NCD and the pregnancy-episode programmes (ANC/PWPROFILE/PNC_MOTHER/
+		# PNC_NEONATE/PREGNANCYOUTCOME) are the fully-translated programmes so
+		# far -- EYE_CARE stays the not-yet-implemented stub for this test.
 		payload = {
 			"requestId": "itc-req-4",
 			"deviceId": "device-1",
-			"assessments": [{"referenceId": 40, "assessmentType": "ANC"}],
+			"assessments": [{"referenceId": 40, "assessmentType": "EYE_CARE"}],
 			"followUps": [{"referenceId": 41}],
 		}
 		result = self._create(payload)
@@ -301,7 +301,7 @@ class TestOfflineSyncNcdAssessment(unittest.TestCase):
 			"deviceId": "device-ncd",
 			"assessments": [
 				self._ncd_assessment(210, member_name, hh_name),
-				{"referenceId": 211, "assessmentType": "ANC"},
+				{"referenceId": 211, "assessmentType": "EYE_CARE"},
 			],
 		}
 		result = self._create(payload)
@@ -326,12 +326,157 @@ class TestOfflineSyncFetchAndHistory(unittest.TestCase):
 
 	def test_fetch_synced_data_returns_households_and_members_shape(self):
 		result = fetch_synced_data(payload=json.dumps({"villageIds": []}))
-		self.assertEqual(result, {"households": [], "householdMembers": []})
+		self.assertEqual(
+			result,
+			{
+				"households": [],
+				"householdMembers": [],
+				"pregnancyInfos": [],
+				"treatmentDetails": [],
+			},
+		)
 
 	def test_member_assessment_history_returns_entity_list_shape(self):
 		result = member_assessment_history(payload=json.dumps({"villageIds": ["0"]}))
 		self.assertIn("entityList", result)
 		self.assertIsInstance(result["entityList"], list)
+
+
+class TestOfflineSyncPregnancyAssessment(unittest.TestCase):
+	"""Phase 4 of the migration plan: ANC/PWPROFILE/PNC_MOTHER/PNC_NEONATE/
+	PREGNANCYOUTCOME -- create() routes these to spice_next_core.api.
+	mobile_sync.process_pregnancy_assessment, sharing one Case per
+	pregnancyEpisodeId across the whole episode's visits."""
+
+	_PROVIDER = "lf_sk"
+
+	def setUp(self):
+		frappe.local.remote_user_id = self._PROVIDER
+		self._docs = []
+		self._batches = []
+
+	def tearDown(self):
+		for doctype, name in reversed(self._docs):
+			if not frappe.db.exists(doctype, name):
+				continue
+			if doctype == "Household":
+				doc = frappe.get_doc(doctype, name)
+				doc.members = []
+				doc.save(ignore_permissions=True)
+			if frappe.get_meta(doctype).is_submittable and frappe.db.get_value(doctype, name, "docstatus") == 1:
+				frappe.get_doc(doctype, name).cancel()
+			frappe.delete_doc(doctype, name, ignore_permissions=True, delete_permanently=True, force=True)
+		for name in self._batches:
+			if frappe.db.exists("Offline Sync Batch", name):
+				frappe.delete_doc(
+					"Offline Sync Batch", name, ignore_permissions=True, delete_permanently=True
+				)
+		frappe.db.commit()
+
+	def _create(self, payload):
+		result = create(payload=json.dumps(payload))
+		self._batches.append(payload["requestId"])
+		return result
+
+	def _make_member(self, request_id, *, household_ref, member_ref, device_id="device-preg"):
+		payload = {
+			"requestId": request_id,
+			"deviceId": device_id,
+			"households": [
+				{
+					"referenceId": household_ref,
+					"name": "Pregnancy Test Household",
+					"villageId": 0,
+					"householdMembers": [
+						{
+							"referenceId": member_ref,
+							"name": "Pregnancy Patient",
+							"dateOfBirth": "1995-01-01",
+							"gender": "Female",
+						}
+					],
+				}
+			],
+		}
+		result = self._create(payload)
+		by_type = {item["type"]: item for item in result["entityList"]}
+		hh_name = by_type["Household"]["fhirId"]
+		member_name = by_type["HouseholdMember"]["fhirId"]
+		self._docs.append(("Patient", member_name))
+		self._docs.append(("Household", hh_name))
+		return hh_name, member_name
+
+	def _anc_assessment(self, reference_id, member_name, pregnancy_episode_id):
+		return {
+			"referenceId": reference_id,
+			"assessmentType": "ANC",
+			"assessmentDetails": {
+				"anc": {
+					"medicalHistoryPhysicalExamination": {"systolic": "130", "diastolic": "85"},
+				}
+			},
+			"villageId": "0",
+			"patientStatus": "Recovered",
+			"encounter": {
+				"memberId": member_name,
+				"pregnancyEpisodeId": pregnancy_episode_id,
+				"startTime": "2026-10-06 09:00:00",
+				"endTime": "2026-10-06 09:30:00",
+				"visitNumber": 1,
+			},
+		}
+
+	def _track_side_effects(self, encounter_name, pregnancy_episode_id):
+		self._docs.append(("Mobile Encounter Context", encounter_name))
+		self._docs.append(("Encounter", encounter_name))
+		case_name = f"case-preg-{pregnancy_episode_id}"
+		if frappe.db.exists("Case", case_name):
+			self._docs.append(("Case", case_name))
+		for obs_name in frappe.get_all("Observation", filters={"encounter": encounter_name}, pluck="name"):
+			self._docs.append(("Observation", obs_name))
+
+	def test_create_processes_anc_assessment_end_to_end(self):
+		_, member_name = self._make_member("itc-preg-req-1", household_ref=300, member_ref=301)
+		episode_id = frappe.generate_hash(length=12)
+		payload = {
+			"requestId": "itc-preg-req-2",
+			"deviceId": "device-preg",
+			"assessments": [self._anc_assessment(400, member_name, episode_id)],
+		}
+		result = self._create(payload)
+
+		item = next(i for i in result["entityList"] if i["type"] == "Assessment")
+		self.assertEqual(item["status"], "Success")
+		encounter_name = item["fhirId"]
+		self._track_side_effects(encounter_name, episode_id)
+
+		encounter = frappe.get_doc("Encounter", encounter_name)
+		self.assertEqual(encounter.docstatus, 1)
+		ctx = frappe.get_doc("Mobile Encounter Context", encounter_name)
+		self.assertEqual(ctx.pregnancy_episode_id, episode_id)
+
+	def test_two_anc_visits_same_batch_share_one_case(self):
+		_, member_name = self._make_member("itc-preg-req-3", household_ref=310, member_ref=311)
+		episode_id = frappe.generate_hash(length=12)
+		payload = {
+			"requestId": "itc-preg-req-4",
+			"deviceId": "device-preg",
+			"assessments": [
+				self._anc_assessment(410, member_name, episode_id),
+				self._anc_assessment(411, member_name, episode_id),
+			],
+		}
+		result = self._create(payload)
+
+		assessments = [i for i in result["entityList"] if i["type"] == "Assessment"]
+		self.assertEqual(len(assessments), 2)
+		self.assertTrue(all(a["status"] == "Success" for a in assessments))
+		encounter_names = [a["fhirId"] for a in assessments]
+		self.assertNotEqual(encounter_names[0], encounter_names[1])
+		for enc_name in encounter_names:
+			self._track_side_effects(enc_name, episode_id)
+		encounters = [frappe.get_doc("Encounter", n) for n in encounter_names]
+		self.assertEqual(encounters[0].case, encounters[1].case)
 
 
 if __name__ == "__main__":

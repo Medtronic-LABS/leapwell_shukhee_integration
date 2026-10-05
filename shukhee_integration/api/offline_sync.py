@@ -83,18 +83,29 @@ def create(payload=None):
 			device_id,
 			lambda m=member: mobile_sync.upsert_member(m, device_id),
 		)
-	# assessments: NCD is Phase 3's one fully-translated programme (see the
-	# migration plan); every other programme type still gets the not-yet-
-	# implemented stub below -- a mixed batch must accept-and-store those
-	# too rather than failing the whole batch.
+	# assessments: NCD (Phase 3) and the pregnancy-episode programmes (Phase 4
+	# -- ANC/PWPROFILE/PNC_MOTHER/PNC_NEONATE/PREGNANCYOUTCOME) are the fully-
+	# translated programmes so far (see the migration plan); every other
+	# programme type still gets the not-yet-implemented stub below -- a mixed
+	# batch must accept-and-store those too rather than failing the whole
+	# batch.
 	for assessment in env.get("assessments") or []:
-		if (assessment.get("assessmentType") or "").upper() == "NCD":
+		wire_type = (assessment.get("assessmentType") or "").upper()
+		if wire_type == "NCD":
 			_process_item(
 				batch,
 				"Assessment",
 				assessment.get("referenceId"),
 				device_id,
 				lambda a=assessment: mobile_sync.process_ncd_assessment(a, device_id),
+			)
+		elif wire_type in mobile_sync.PREGNANCY_ASSESSMENT_TYPES:
+			_process_item(
+				batch,
+				"Assessment",
+				assessment.get("referenceId"),
+				device_id,
+				lambda a=assessment: mobile_sync.process_pregnancy_assessment(a, device_id),
 			)
 		else:
 			_record_not_yet_implemented(
@@ -124,21 +135,31 @@ def status(payload=None):
 
 @whitelist(methods=["POST"], remote_auth=True)
 def fetch_synced_data(payload=None):
-	"""Pull (cold + delta). Phase 3 scope: households/householdMembers only
-	(enough to render a worklist) -- patients/followUps/immunisations/
-	assessmentHistory are later phases (see the migration plan)."""
+	"""Pull (cold + delta). Phase 3 scope was households/householdMembers only
+	(enough to render a worklist); Phase 4 adds pregnancyInfos/
+	treatmentDetails (presence/LMP/gravida/parity, enough for the client's
+	own pregnancy-risk cohort rules) -- patients/followUps/immunisations/
+	assessmentHistory remain later phases (see the migration plan)."""
 	env = _resolve_env(payload)
 	village_ids = env.get("villageIds") or []
 	households, members = mobile_sync.fetch_households_and_members(village_ids)
-	return {"households": households, "householdMembers": members}
+	pregnancy_infos, treatment_details = mobile_sync.fetch_pregnancy_infos_and_treatment_details(
+		village_ids
+	)
+	return {
+		"households": households,
+		"householdMembers": members,
+		"pregnancyInfos": pregnancy_infos,
+		"treatmentDetails": treatment_details,
+	}
 
 
 @whitelist(methods=["POST"], remote_auth=True)
 def member_assessment_history(payload=None):
-	"""Phase 3 scope: NCD fields only in the `observations` map -- other
-	programme types still appear in the list (serviceProvided/referralStatus/
-	etc.), just with an empty observations map until their own translation
-	phase lands."""
+	"""Phase 3 scope was NCD fields only in the `observations` map; Phase 4
+	adds the pregnancy-episode programmes. Other programme types still
+	appear in the list (serviceProvided/referralStatus/etc.), just with an
+	empty observations map until their own translation phase lands."""
 	env = _resolve_env(payload)
 	village_ids = env.get("villageIds") or []
 	items = mobile_sync.member_assessment_history(village_ids)
