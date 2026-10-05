@@ -65,32 +65,44 @@ class TestResolveEnv(unittest.TestCase):
 		self.assertEqual(result, {"lng": "en"})
 
 
+_CONSENT_FIELDS = ["lng", "consent", "version", "current_version"]
+
+
 class TestGetConsent(unittest.TestCase):
 
 	@patch("frappe.get_all")
 	def test_exact_language_match_returns_that_row(self, mock_get_all):
-		mock_get_all.return_value = [{"lng": "bn", "consent": "<p>bn consent</p>", "version": "2"}]
+		mock_get_all.return_value = [
+			{"lng": "bn", "consent": "<p>bn consent</p>", "version": "2", "current_version": "4"}
+		]
 
 		result = get_consent(payload='{"lng": "bn"}')
 
-		self.assertEqual(result, {"lng": "bn", "consent": "<p>bn consent</p>", "version": "2"})
+		self.assertEqual(
+			result, {"lng": "bn", "consent": "<p>bn consent</p>", "version": "2", "version_id": "4"}
+		)
 		mock_get_all.assert_called_once_with(
-			"Shukhee Consent", filters={"lng": "bn"}, fields=["lng", "consent", "version"], limit=1
+			"Shukhee Consent", filters={"lng": "bn"}, fields=_CONSENT_FIELDS, limit=1
 		)
 
 	@patch("frappe.get_all")
 	def test_missing_language_falls_back_to_english(self, mock_get_all):
-		mock_get_all.side_effect = [[], [{"lng": "en", "consent": "<p>en consent</p>", "version": "2"}]]
+		mock_get_all.side_effect = [
+			[],
+			[{"lng": "en", "consent": "<p>en consent</p>", "version": "2", "current_version": "3"}],
+		]
 
 		result = get_consent(payload='{"lng": "bn"}')
 
-		self.assertEqual(result, {"lng": "en", "consent": "<p>en consent</p>", "version": "2"})
+		self.assertEqual(
+			result, {"lng": "en", "consent": "<p>en consent</p>", "version": "2", "version_id": "3"}
+		)
 		self.assertEqual(mock_get_all.call_count, 2)
 		mock_get_all.assert_any_call(
-			"Shukhee Consent", filters={"lng": "bn"}, fields=["lng", "consent", "version"], limit=1
+			"Shukhee Consent", filters={"lng": "bn"}, fields=_CONSENT_FIELDS, limit=1
 		)
 		mock_get_all.assert_any_call(
-			"Shukhee Consent", filters={"lng": "en"}, fields=["lng", "consent", "version"], limit=1
+			"Shukhee Consent", filters={"lng": "en"}, fields=_CONSENT_FIELDS, limit=1
 		)
 
 	@patch("frappe.get_all")
@@ -102,13 +114,17 @@ class TestGetConsent(unittest.TestCase):
 
 	@patch("frappe.get_all")
 	def test_missing_lng_defaults_to_en(self, mock_get_all):
-		mock_get_all.return_value = [{"lng": "en", "consent": "<p>en consent</p>", "version": "1"}]
+		mock_get_all.return_value = [
+			{"lng": "en", "consent": "<p>en consent</p>", "version": "1", "current_version": "3"}
+		]
 
 		result = get_consent(payload="{}")
 
-		self.assertEqual(result, {"lng": "en", "consent": "<p>en consent</p>", "version": "1"})
+		self.assertEqual(
+			result, {"lng": "en", "consent": "<p>en consent</p>", "version": "1", "version_id": "3"}
+		)
 		mock_get_all.assert_called_once_with(
-			"Shukhee Consent", filters={"lng": "en"}, fields=["lng", "consent", "version"], limit=1
+			"Shukhee Consent", filters={"lng": "en"}, fields=_CONSENT_FIELDS, limit=1
 		)
 
 
@@ -120,6 +136,7 @@ class TestRecordConsentDecision(unittest.TestCase):
 		"decision": "Agreed",
 		"lng": "en",
 		"consent_version": "2",
+		"version_id": "3",
 		"patient_dob": "1990-01-01",
 	}
 
@@ -155,12 +172,14 @@ class TestRecordConsentDecision(unittest.TestCase):
 		mock_current_provider.assert_not_called()
 
 	@patch("frappe.db.commit")
+	@patch("frappe.db.exists")
 	@patch("frappe.get_doc")
 	@patch("shukhee_integration.api.consent._current_provider")
 	def test_successful_insert_stamps_the_right_fields(
-		self, mock_current_provider, mock_get_doc, mock_commit
+		self, mock_current_provider, mock_get_doc, mock_exists, mock_commit
 	):
 		mock_current_provider.return_value = "PROV-1"
+		mock_exists.return_value = True
 		log_doc = MagicMock()
 		mock_get_doc.return_value = log_doc
 
@@ -176,16 +195,42 @@ class TestRecordConsentDecision(unittest.TestCase):
 		self.assertEqual(doc_dict["visit_id"], "VISIT-1")
 		self.assertEqual(doc_dict["decision"], "Agreed")
 		self.assertEqual(doc_dict["lng"], "en")
-		self.assertEqual(doc_dict["consent_version"], "2")
+		# consent_version is resolved from version_id (validated against Shukhee Consent
+		# Version), not the raw consent_version string the client also sends.
+		self.assertEqual(doc_dict["consent_version"], "3")
+		mock_exists.assert_called_once_with("Shukhee Consent Version", "3")
 		self.assertEqual(doc_dict["provider"], "PROV-1")
 		self.assertEqual(doc_dict["patient_dob"], "1990-01-01")
 		self.assertIn("occurred_at", doc_dict)
 
 	@patch("frappe.db.commit")
+	@patch("frappe.db.exists")
 	@patch("frappe.get_doc")
 	@patch("shukhee_integration.api.consent._current_provider")
-	def test_declined_decision_is_recorded(self, mock_current_provider, mock_get_doc, mock_commit):
+	def test_unknown_version_id_leaves_consent_version_empty(
+		self, mock_current_provider, mock_get_doc, mock_exists, mock_commit
+	):
+		"""An invalid/stale version_id is a best-effort no-op on the link value, not an
+		error -- the decision itself still gets recorded."""
 		mock_current_provider.return_value = "PROV-1"
+		mock_exists.return_value = False
+		mock_get_doc.return_value = MagicMock()
+
+		result = record_consent_decision(payload=json.dumps(self._VALID_ENV))
+
+		self.assertEqual(result, {"logged": True})
+		(doc_dict,), _kwargs = mock_get_doc.call_args
+		self.assertIsNone(doc_dict["consent_version"])
+
+	@patch("frappe.db.commit")
+	@patch("frappe.db.exists")
+	@patch("frappe.get_doc")
+	@patch("shukhee_integration.api.consent._current_provider")
+	def test_declined_decision_is_recorded(
+		self, mock_current_provider, mock_get_doc, mock_exists, mock_commit
+	):
+		mock_current_provider.return_value = "PROV-1"
+		mock_exists.return_value = True
 		mock_get_doc.return_value = MagicMock()
 
 		result = record_consent_decision(payload=json.dumps(dict(self._VALID_ENV, decision="Declined")))
@@ -195,15 +240,17 @@ class TestRecordConsentDecision(unittest.TestCase):
 		self.assertEqual(doc_dict["decision"], "Declined")
 
 	@patch("frappe.db.commit")
+	@patch("frappe.db.exists")
 	@patch("frappe.get_doc")
 	@patch("shukhee_integration.api.consent._current_provider")
 	def test_provider_is_resolved_server_side_not_from_client_payload(
-		self, mock_current_provider, mock_get_doc, mock_commit
+		self, mock_current_provider, mock_get_doc, mock_exists, mock_commit
 	):
 		"""A client-supplied `provider` field (if one were ever sent) must never be trusted --
 		only _current_provider()'s current_remote_user_id() -> Provider.username resolution
 		may set this field."""
 		mock_current_provider.return_value = "PROV-REAL"
+		mock_exists.return_value = True
 		mock_get_doc.return_value = MagicMock()
 
 		env = dict(self._VALID_ENV, provider="PROV-SPOOFED")
@@ -214,53 +261,62 @@ class TestRecordConsentDecision(unittest.TestCase):
 		self.assertEqual(doc_dict["provider"], "PROV-REAL")
 
 
+def _exists_side_effect(known_version_ids=("VER-1",)):
+	"""Builds a frappe.db.exists side_effect that answers both checks
+	attach_consent_to_call makes -- Call Logs existence and (via _resolve_version_id)
+	Shukhee Consent Version existence -- keyed by doctype, since a single
+	`mock_exists.return_value` can't distinguish between them."""
+
+	def _exists(doctype, name):
+		if doctype == "Call Logs":
+			return name != "CL-missing"
+		if doctype == "Shukhee Consent Version":
+			return name in known_version_ids
+		raise AssertionError(f"unexpected frappe.db.exists call: {doctype}, {name}")
+
+	return _exists
+
+
 class TestAttachConsentToCall(unittest.TestCase):
 
 	def test_missing_call_log_raises(self):
 		with self.assertRaises(frappe.ValidationError):
-			attach_consent_to_call(payload='{"consent_version": "2", "lng": "en"}')
+			attach_consent_to_call(payload='{"version_id": "VER-1", "lng": "en"}')
 
 	@patch("frappe.db.exists")
 	def test_unknown_call_log_is_a_no_op(self, mock_exists):
-		mock_exists.return_value = False
+		mock_exists.side_effect = _exists_side_effect()
 		result = attach_consent_to_call(
-			payload='{"call_log": "CL-missing", "consent_version": "2", "lng": "en"}'
+			payload='{"call_log": "CL-missing", "version_id": "VER-1", "lng": "en"}'
 		)
 		self.assertEqual(result, {"attached": False})
 
 	@patch("frappe.db.commit")
 	@patch("frappe.db.set_value")
-	@patch("frappe.db.get_value")
 	@patch("frappe.db.exists")
-	def test_known_call_log_is_stamped(self, mock_exists, mock_get_value, mock_set_value, mock_commit):
-		"""consent_version is resolved server-side from Shukhee Consent (by language), not from
-		the client-supplied version string -- Shukhee Consent has exactly one row per language,
-		and a Link field's value must be that row's own name."""
-		mock_exists.return_value = True
-		mock_get_value.return_value = "1"
+	def test_known_call_log_is_stamped(self, mock_exists, mock_set_value, mock_commit):
+		"""consent_version is trusted directly from the client-supplied version_id (once
+		validated), not re-resolved from the language -- see attach_consent_to_call's own
+		doc comment for why re-resolving at attach time would be unsafe."""
+		mock_exists.side_effect = _exists_side_effect()
 		result = attach_consent_to_call(
-			payload='{"call_log": "CL-1", "consent_version": "2", "lng": "en"}'
+			payload='{"call_log": "CL-1", "version_id": "VER-1", "lng": "en"}'
 		)
 		self.assertEqual(result, {"attached": True})
-		mock_get_value.assert_called_once_with("Shukhee Consent", {"lng": "en"}, "name")
 		mock_set_value.assert_called_once_with(
-			"Call Logs", "CL-1", {"consent_version": "1", "consent_lng": "en"}
+			"Call Logs", "CL-1", {"consent_version": "VER-1", "consent_lng": "en"}
 		)
 		mock_commit.assert_called_once()
 
 	@patch("frappe.db.commit")
 	@patch("frappe.db.set_value")
-	@patch("frappe.db.get_value")
 	@patch("frappe.db.exists")
-	def test_no_matching_consent_row_leaves_link_empty(
-		self, mock_exists, mock_get_value, mock_set_value, mock_commit
-	):
-		"""An unconfigured language (no Shukhee Consent row) is a best-effort no-op on the
-		link value, not an error -- the call_log/lng are still stamped."""
-		mock_exists.return_value = True
-		mock_get_value.return_value = None
+	def test_unknown_version_id_leaves_link_empty(self, mock_exists, mock_set_value, mock_commit):
+		"""An invalid/stale version_id is a best-effort no-op on the link value, not an
+		error -- the call_log/lng are still stamped."""
+		mock_exists.side_effect = _exists_side_effect(known_version_ids=())
 		result = attach_consent_to_call(
-			payload='{"call_log": "CL-1", "consent_version": "2", "lng": "en"}'
+			payload='{"call_log": "CL-1", "version_id": "VER-missing", "lng": "en"}'
 		)
 		self.assertEqual(result, {"attached": True})
 		mock_set_value.assert_called_once_with(
@@ -269,15 +325,13 @@ class TestAttachConsentToCall(unittest.TestCase):
 
 	@patch("frappe.db.commit")
 	@patch("frappe.db.set_value")
-	@patch("frappe.db.get_value")
 	@patch("frappe.db.exists")
-	def test_idempotent_on_repeat_calls(self, mock_exists, mock_get_value, mock_set_value, mock_commit):
+	def test_idempotent_on_repeat_calls(self, mock_exists, mock_set_value, mock_commit):
 		"""Safe to call twice (e.g. a retried attach) -- last write wins, no error."""
-		mock_exists.return_value = True
-		mock_get_value.return_value = "1"
+		mock_exists.side_effect = _exists_side_effect()
 		for _ in range(2):
 			result = attach_consent_to_call(
-				payload='{"call_log": "CL-1", "consent_version": "2", "lng": "en"}'
+				payload='{"call_log": "CL-1", "version_id": "VER-1", "lng": "en"}'
 			)
 			self.assertEqual(result, {"attached": True})
 		self.assertEqual(mock_set_value.call_count, 2)

@@ -31,6 +31,18 @@ def _resolve_env(payload=None):
 	return frappe.local.form_dict
 
 
+def _resolve_version_id(env):
+	"""Validates a client-supplied `version_id` against Shukhee Consent Version before trusting
+	it as a Link value -- shared by record_consent_decision and attach_consent_to_call, both of
+	which receive this id as an opaque echo of what get_consent returned and must never store it
+	unchecked. Returns None (never throws) for a missing/unknown id -- the exact snapshot a
+	client saw is always best-effort to record, never a hard requirement."""
+	version_id = env.get("version_id")
+	if not version_id or not frappe.db.exists("Shukhee Consent Version", version_id):
+		return None
+	return version_id
+
+
 @whitelist(methods=["POST"], remote_auth=True)
 def get_consent(payload=None):
 	"""Returns this app's current consent HTML for the requested language, falling back to
@@ -39,18 +51,28 @@ def get_consent(payload=None):
 	edited consent takes effect on the very next call, not the next app release. Read-only
 	config fetch, no per-caller identity to check -- same shape as get_specialities in
 	consultation.py, so (like that endpoint) this is NOT wrapped by audit_inbound: there's no
-	call-lifecycle event here to log."""
+	call-lifecycle event here to log.
+
+	`version_id` is the Shukhee Consent Version snapshot row backing this response (see
+	ShukheeConsent.on_update) -- the client must carry it forward unchanged (not re-derive it
+	later) and echo it back via record_consent_decision/attach_consent_to_call, since by then
+	Shukhee Consent may have been edited again and no longer reflects what was shown here."""
 	env = _resolve_env(payload)
 	lng = env.get("lng") or "en"
 
-	fields = ["lng", "consent", "version"]
+	fields = ["lng", "consent", "version", "current_version"]
 	rows = frappe.get_all("Shukhee Consent", filters={"lng": lng}, fields=fields, limit=1)
 	if not rows and lng != "en":
 		rows = frappe.get_all("Shukhee Consent", filters={"lng": "en"}, fields=fields, limit=1)
 	if not rows:
 		frappe.throw(_("No consent content configured."), frappe.DoesNotExistError)
 
-	return {"lng": rows[0]["lng"], "consent": rows[0]["consent"], "version": rows[0]["version"]}
+	return {
+		"lng": rows[0]["lng"],
+		"consent": rows[0]["consent"],
+		"version": rows[0]["version"],
+		"version_id": rows[0]["current_version"],
+	}
 
 
 @whitelist(methods=["POST"], remote_auth=True)
@@ -84,7 +106,7 @@ def record_consent_decision(payload=None):
 			"visit_id": env.get("visit_id"),
 			"decision": decision,
 			"lng": lng,
-			"consent_version": env.get("consent_version"),
+			"consent_version": _resolve_version_id(env),
 			"provider": provider,
 			"patient_dob": env.get("patient_dob"),
 			"occurred_at": frappe.utils.now_datetime(),
@@ -112,11 +134,13 @@ def attach_consent_to_call(payload=None):
 	attached" from "a previous attempt succeeded but the response was lost" and must be free
 	to simply retry), and a repeat call is safe (last write wins).
 
-	consent_version is a Link to Shukhee Consent, resolved here from the language the patient
-	saw -- NOT from the client-supplied version string, since Shukhee Consent keeps exactly one
-	row per language (edited in place, no version history) and a Link field's value must be
-	that row's own name. An unconfigured language (no matching row) leaves the link empty
-	rather than erroring -- this attach is always best-effort."""
+	consent_version is a Link to Shukhee Consent Version -- trusted directly from the client's
+	version_id (validated, never blindly), NOT re-resolved from the language here. Booking can
+	happen minutes after the patient actually saw the consent copy, and Shukhee Consent may have
+	been edited again in between; re-resolving "the current version for this language" at attach
+	time could silently point at a newer edit than what was actually shown. The client captured
+	the exact id once, from get_consent, and must carry it forward unchanged -- see that
+	function's own doc comment."""
 	env = _resolve_env(payload)
 	call_log_name = env.get("call_log")
 	if not call_log_name:
@@ -125,13 +149,10 @@ def attach_consent_to_call(payload=None):
 	if not frappe.db.exists("Call Logs", call_log_name):
 		return {"attached": False}
 
-	lng = env.get("lng")
-	consent_name = frappe.db.get_value("Shukhee Consent", {"lng": lng}, "name") if lng else None
-
 	frappe.db.set_value(
 		"Call Logs",
 		call_log_name,
-		{"consent_version": consent_name, "consent_lng": lng},
+		{"consent_version": _resolve_version_id(env), "consent_lng": env.get("lng")},
 	)
 	frappe.db.commit()
 	return {"attached": True}

@@ -1,0 +1,72 @@
+{
+ "actions": [],
+ "autoname": "autoincrement",
+ "creation": "2026-10-05 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "shukhee_consent",
+  "lng",
+  "version",
+  "consent"
+ ],
+ "fields": [
+  {
+   "fieldname": "shukhee_consent",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Shukhee Consent",
+   "options": "Shukhee Consent",
+   "description": "Which language row (Shukhee Consent.lng) this snapshot was taken from.",
+   "reqd": 1
+  },
+  {
+   "fieldname": "lng",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Language",
+   "options": "en\nbn",
+   "description": "Denormalized copy of shukhee_consent.lng, so list views can filter by language without following the link.",
+   "reqd": 1
+  },
+  {
+   "fieldname": "version",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Version",
+   "description": "The human-entered version label, copied verbatim from Shukhee Consent.version at the moment this snapshot was taken.",
+   "reqd": 1
+  },
+  {
+   "fieldname": "consent",
+   "fieldtype": "Text Editor",
+   "label": "Consent",
+   "description": "Immutable HTML snapshot of Shukhee Consent.consent at the moment this version was saved -- never edited after creation. This is what Call Logs.consent_version / Shukhee Consent Log.consent_version actually link to, so a historical call or decision always resolves to the exact wording that was live when it happened, not whatever Shukhee Consent currently holds.",
+   "reqd": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-10-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Shukhee Integration",
+ "name": "Shukhee Consent Version",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 0,
+   "email": 0,
+   "export": 1,
+   "print": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 0,
+   "write": 0
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "hide_toolbar": 1
+}

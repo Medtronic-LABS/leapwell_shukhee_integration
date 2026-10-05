@@ -8,6 +8,7 @@
   "lng",
   "consent",
   "version",
+  "current_version",
   "shukhee_settings"
  ],
  "fields": [
@@ -33,6 +34,14 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Version"
+  },
+  {
+   "fieldname": "current_version",
+   "fieldtype": "Link",
+   "label": "Current Version",
+   "options": "Shukhee Consent Version",
+   "read_only": 1,
+   "description": "The Shukhee Consent Version row holding an immutable snapshot of this row's current `consent`/`version` -- maintained automatically (see ShukheeConsent.on_update), never set by hand. This is what Call Logs.consent_version / Shukhee Consent Log.consent_version actually resolve to, not this row directly, since this row keeps getting overwritten in place on every edit."
   },
   {
    "fieldname": "shukhee_settings",

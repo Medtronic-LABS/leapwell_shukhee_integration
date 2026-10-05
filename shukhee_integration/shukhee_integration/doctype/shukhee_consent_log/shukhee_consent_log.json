@@ -48,9 +48,10 @@
   },
   {
    "fieldname": "consent_version",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "label": "Consent Version",
-   "description": "Echoed back from Shukhee Consent.version as returned by the get_consent call the client fetched right before this decision."
+   "options": "Shukhee Consent Version",
+   "description": "The exact Shukhee Consent Version snapshot the client fetched via get_consent right before this decision -- validated server-side against the client-supplied version_id in record_consent_decision, not trusted blindly. Left empty if the id didn't resolve to a real row, rather than guessing."
   },
   {
    "fieldname": "provider",
