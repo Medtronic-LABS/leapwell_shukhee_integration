@@ -83,14 +83,23 @@ def create(payload=None):
 			device_id,
 			lambda m=member: mobile_sync.upsert_member(m, device_id),
 		)
-	# assessments / followUps: accepted and acknowledged but not yet domain-
-	# processed -- per-programme clinical translation is Phase 3+ work (see
-	# the migration plan). Marking Failed here (rather than silently dropping)
-	# keeps the mobile app's own retry/visibility behaviour correct in the
-	# meantime: a Failed assessment stays queued for retry, exactly as
-	# intended once this phase actually lands.
+	# assessments: NCD is Phase 3's one fully-translated programme (see the
+	# migration plan); every other programme type still gets the not-yet-
+	# implemented stub below -- a mixed batch must accept-and-store those
+	# too rather than failing the whole batch.
 	for assessment in env.get("assessments") or []:
-		_record_not_yet_implemented(batch, "Assessment", assessment.get("referenceId"), device_id)
+		if (assessment.get("assessmentType") or "").upper() == "NCD":
+			_process_item(
+				batch,
+				"Assessment",
+				assessment.get("referenceId"),
+				device_id,
+				lambda a=assessment: mobile_sync.process_ncd_assessment(a, device_id),
+			)
+		else:
+			_record_not_yet_implemented(
+				batch, "Assessment", assessment.get("referenceId"), device_id
+			)
 	for follow_up in env.get("followUps") or []:
 		_record_not_yet_implemented(batch, "FollowUp", follow_up.get("referenceId"), device_id)
 
@@ -115,16 +124,25 @@ def status(payload=None):
 
 @whitelist(methods=["POST"], remote_auth=True)
 def fetch_synced_data(payload=None):
-	"""Pull (cold + delta). Stub -- households/householdMembers-only parity
-	is Phase 2 (NCD end-to-end slice) work; see the migration plan."""
-	raise NotImplementedError("fetch_synced_data: Phase 2 work, not yet implemented")
+	"""Pull (cold + delta). Phase 3 scope: households/householdMembers only
+	(enough to render a worklist) -- patients/followUps/immunisations/
+	assessmentHistory are later phases (see the migration plan)."""
+	env = _resolve_env(payload)
+	village_ids = env.get("villageIds") or []
+	households, members = mobile_sync.fetch_households_and_members(village_ids)
+	return {"households": households, "householdMembers": members}
 
 
 @whitelist(methods=["POST"], remote_auth=True)
 def member_assessment_history(payload=None):
-	"""Stub -- Phase 2+ work, depends on assessment/Observation translation
-	not yet implemented (see `create`'s own note on assessments)."""
-	raise NotImplementedError("member_assessment_history: Phase 2+ work, not yet implemented")
+	"""Phase 3 scope: NCD fields only in the `observations` map -- other
+	programme types still appear in the list (serviceProvided/referralStatus/
+	etc.), just with an empty observations map until their own translation
+	phase lands."""
+	env = _resolve_env(payload)
+	village_ids = env.get("villageIds") or []
+	items = mobile_sync.member_assessment_history(village_ids)
+	return {"entityList": items}
 
 
 def _process_household(batch, household_payload, device_id):

@@ -20,6 +20,8 @@ from shukhee_integration.api import offline_sync
 
 create = inspect.unwrap(offline_sync.create)
 status = inspect.unwrap(offline_sync.status)
+fetch_synced_data = inspect.unwrap(offline_sync.fetch_synced_data)
+member_assessment_history = inspect.unwrap(offline_sync.member_assessment_history)
 
 
 class TestOfflineSyncCreate(unittest.TestCase):
@@ -145,10 +147,13 @@ class TestOfflineSyncCreate(unittest.TestCase):
 		)
 
 	def test_unimplemented_entity_types_marked_failed_not_dropped(self):
+		# NCD is the one fully-translated programme (see test_create_processes_
+		# ncd_assessment_end_to_end below) -- ANC stays the not-yet-implemented
+		# stub for this test.
 		payload = {
 			"requestId": "itc-req-4",
 			"deviceId": "device-1",
-			"assessments": [{"referenceId": 40, "assessmentType": "NCD"}],
+			"assessments": [{"referenceId": 40, "assessmentType": "ANC"}],
 			"followUps": [{"referenceId": 41}],
 		}
 		result = self._create(payload)
@@ -170,6 +175,163 @@ class TestOfflineSyncCreate(unittest.TestCase):
 
 		fetched = status(payload=json.dumps({"requestId": "itc-req-5"}))
 		self.assertEqual(fetched, created)
+
+
+class TestOfflineSyncNcdAssessment(unittest.TestCase):
+	"""Phase 3 of the migration plan: NCD is the one fully-translated
+	programme -- create() routes assessmentType=NCD to spice_next_core.api.
+	mobile_sync.process_ncd_assessment instead of the not-yet-implemented
+	stub every other programme type still gets."""
+
+	_PROVIDER = "lf_sk"
+
+	def setUp(self):
+		frappe.local.remote_user_id = self._PROVIDER
+		self._docs = []  # [(doctype, name), ...] in creation order, deleted in reverse
+		self._batches = []
+
+	def tearDown(self):
+		for doctype, name in reversed(self._docs):
+			if not frappe.db.exists(doctype, name):
+				continue
+			if doctype == "Household":
+				doc = frappe.get_doc(doctype, name)
+				doc.members = []
+				doc.save(ignore_permissions=True)
+			if frappe.get_meta(doctype).is_submittable and frappe.db.get_value(doctype, name, "docstatus") == 1:
+				frappe.get_doc(doctype, name).cancel()
+			frappe.delete_doc(doctype, name, ignore_permissions=True, delete_permanently=True, force=True)
+		for name in self._batches:
+			if frappe.db.exists("Offline Sync Batch", name):
+				frappe.delete_doc(
+					"Offline Sync Batch", name, ignore_permissions=True, delete_permanently=True
+				)
+		frappe.db.commit()
+
+	def _create(self, payload):
+		result = create(payload=json.dumps(payload))
+		self._batches.append(payload["requestId"])
+		return result
+
+	def _make_member(self, request_id, *, household_ref, member_ref, device_id="device-ncd"):
+		payload = {
+			"requestId": request_id,
+			"deviceId": device_id,
+			"households": [
+				{
+					"referenceId": household_ref,
+					"name": "NCD Test Household",
+					"villageId": 0,
+					"householdMembers": [
+						{
+							"referenceId": member_ref,
+							"name": "NCD Patient",
+							"dateOfBirth": "1970-01-01",
+							"gender": "Female",
+						}
+					],
+				}
+			],
+		}
+		result = self._create(payload)
+		by_type = {item["type"]: item for item in result["entityList"]}
+		hh_name = by_type["Household"]["fhirId"]
+		member_name = by_type["HouseholdMember"]["fhirId"]
+		self._docs.append(("Patient", member_name))
+		self._docs.append(("Household", hh_name))
+		return hh_name, member_name
+
+	def _ncd_assessment(self, reference_id, member_name, household_name):
+		return {
+			"referenceId": reference_id,
+			"assessmentType": "NCD",
+			"assessmentDetails": {
+				"ncd": {
+					"bpLog": {
+						"avgSystolic": 150,
+						"avgDiastolic": 95,
+						"bpLogDetails": [{"systolic": 150, "diastolic": 95}],
+					},
+					"glucoseLog": {"glucose": 7.2, "glucoseType": "fbs"},
+					"biometric": {"height": 160.0, "weight": 55.0},
+				}
+			},
+			"villageId": "0",
+			"patientStatus": "Recovered",
+			"encounter": {
+				"householdId": household_name,
+				"memberId": member_name,
+				"patientId": member_name,
+				"startTime": "2026-10-06 09:00:00",
+				"endTime": "2026-10-06 09:30:00",
+			},
+		}
+
+	def _track_ncd_side_effects(self, encounter_name, member_name):
+		self._docs.append(("Mobile Encounter Context", encounter_name))
+		self._docs.append(("Encounter", encounter_name))
+		case_name = frappe.db.get_value("Case", {"patient": member_name}, "name")
+		if case_name:
+			self._docs.append(("Case", case_name))
+		for obs_name in frappe.get_all("Observation", filters={"encounter": encounter_name}, pluck="name"):
+			self._docs.append(("Observation", obs_name))
+
+	def test_create_processes_ncd_assessment_end_to_end(self):
+		hh_name, member_name = self._make_member("itc-ncd-req-1", household_ref=100, member_ref=101)
+		payload = {
+			"requestId": "itc-ncd-req-2",
+			"deviceId": "device-ncd",
+			"assessments": [self._ncd_assessment(200, member_name, hh_name)],
+		}
+		result = self._create(payload)
+
+		item = next(i for i in result["entityList"] if i["type"] == "Assessment")
+		self.assertEqual(item["status"], "Success")
+		encounter_name = item["fhirId"]
+		self._track_ncd_side_effects(encounter_name, member_name)
+
+		encounter = frappe.get_doc("Encounter", encounter_name)
+		self.assertEqual(encounter.docstatus, 1)
+		self.assertEqual(encounter.patient, member_name)
+
+	def test_mixed_batch_ncd_succeeds_other_programme_still_not_implemented(self):
+		hh_name, member_name = self._make_member("itc-ncd-req-3", household_ref=110, member_ref=111)
+		payload = {
+			"requestId": "itc-ncd-req-4",
+			"deviceId": "device-ncd",
+			"assessments": [
+				self._ncd_assessment(210, member_name, hh_name),
+				{"referenceId": 211, "assessmentType": "ANC"},
+			],
+		}
+		result = self._create(payload)
+
+		assessments = [i for i in result["entityList"] if i["type"] == "Assessment"]
+		by_ref = {i["referenceId"]: i for i in assessments}
+		self.assertEqual(by_ref["210"]["status"], "Success")
+		self.assertEqual(by_ref["211"]["status"], "Failed")
+		self._track_ncd_side_effects(by_ref["210"]["fhirId"], member_name)
+
+
+class TestOfflineSyncFetchAndHistory(unittest.TestCase):
+	"""Thin wire-adapter smoke tests -- the domain logic these two endpoints
+	call into (mobile_sync.fetch_households_and_members /
+	mobile_sync.member_assessment_history) has its own full coverage in
+	spice_next_core/tests/test_mobile_sync.py."""
+
+	_PROVIDER = "lf_sk"
+
+	def setUp(self):
+		frappe.local.remote_user_id = self._PROVIDER
+
+	def test_fetch_synced_data_returns_households_and_members_shape(self):
+		result = fetch_synced_data(payload=json.dumps({"villageIds": []}))
+		self.assertEqual(result, {"households": [], "householdMembers": []})
+
+	def test_member_assessment_history_returns_entity_list_shape(self):
+		result = member_assessment_history(payload=json.dumps({"villageIds": ["0"]}))
+		self.assertIn("entityList", result)
+		self.assertIsInstance(result["entityList"], list)
 
 
 if __name__ == "__main__":
