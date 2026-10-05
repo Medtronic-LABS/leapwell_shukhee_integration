@@ -147,13 +147,16 @@ class TestOfflineSyncCreate(unittest.TestCase):
 		)
 
 	def test_unimplemented_entity_types_marked_failed_not_dropped(self):
-		# NCD and the pregnancy-episode programmes (ANC/PWPROFILE/PNC_MOTHER/
-		# PNC_NEONATE/PREGNANCYOUTCOME) are the fully-translated programmes so
-		# far -- EYE_CARE stays the not-yet-implemented stub for this test.
+		# NCD, the pregnancy-episode programmes, and CHILDHOOD_VISIT/ICCM/
+		# EYE_CARE/CATARACT/FAMILY_PLANNING are all fully-translated now --
+		# that's every type the migration plan scoped in. TB is the one
+		# wire type uhis_lf_mobile's own mapper implements that the plan
+		# explicitly scoped OUT, so it stays the not-yet-implemented stub
+		# for this test.
 		payload = {
 			"requestId": "itc-req-4",
 			"deviceId": "device-1",
-			"assessments": [{"referenceId": 40, "assessmentType": "EYE_CARE"}],
+			"assessments": [{"referenceId": 40, "assessmentType": "TB"}],
 			"followUps": [{"referenceId": 41}],
 		}
 		result = self._create(payload)
@@ -301,7 +304,7 @@ class TestOfflineSyncNcdAssessment(unittest.TestCase):
 			"deviceId": "device-ncd",
 			"assessments": [
 				self._ncd_assessment(210, member_name, hh_name),
-				{"referenceId": 211, "assessmentType": "EYE_CARE"},
+				{"referenceId": 211, "assessmentType": "TB"},
 			],
 		}
 		result = self._create(payload)
@@ -477,6 +480,105 @@ class TestOfflineSyncPregnancyAssessment(unittest.TestCase):
 			self._track_side_effects(enc_name, episode_id)
 		encounters = [frappe.get_doc("Encounter", n) for n in encounter_names]
 		self.assertEqual(encounters[0].case, encounters[1].case)
+
+
+class TestOfflineSyncOtherAssessment(unittest.TestCase):
+	"""Phase 5 of the migration plan: CHILDHOOD_VISIT/ICCM/EYE_CARE/CATARACT/
+	FAMILY_PLANNING -- create() routes these to spice_next_core.api.
+	mobile_sync.process_other_assessment."""
+
+	_PROVIDER = "lf_sk"
+
+	def setUp(self):
+		frappe.local.remote_user_id = self._PROVIDER
+		self._docs = []
+		self._batches = []
+
+	def tearDown(self):
+		for doctype, name in reversed(self._docs):
+			if not frappe.db.exists(doctype, name):
+				continue
+			if doctype == "Household":
+				doc = frappe.get_doc(doctype, name)
+				doc.members = []
+				doc.save(ignore_permissions=True)
+			if frappe.get_meta(doctype).is_submittable and frappe.db.get_value(doctype, name, "docstatus") == 1:
+				frappe.get_doc(doctype, name).cancel()
+			frappe.delete_doc(doctype, name, ignore_permissions=True, delete_permanently=True, force=True)
+		for name in self._batches:
+			if frappe.db.exists("Offline Sync Batch", name):
+				frappe.delete_doc(
+					"Offline Sync Batch", name, ignore_permissions=True, delete_permanently=True
+				)
+		frappe.db.commit()
+
+	def _create(self, payload):
+		result = create(payload=json.dumps(payload))
+		self._batches.append(payload["requestId"])
+		return result
+
+	def _make_member(self, request_id, *, household_ref, member_ref, device_id="device-other"):
+		payload = {
+			"requestId": request_id,
+			"deviceId": device_id,
+			"households": [
+				{
+					"referenceId": household_ref,
+					"name": "Other Programme Household",
+					"villageId": 0,
+					"householdMembers": [
+						{
+							"referenceId": member_ref,
+							"name": "Other Programme Patient",
+							"dateOfBirth": "1990-01-01",
+							"gender": "Male",
+						}
+					],
+				}
+			],
+		}
+		result = self._create(payload)
+		by_type = {item["type"]: item for item in result["entityList"]}
+		hh_name = by_type["Household"]["fhirId"]
+		member_name = by_type["HouseholdMember"]["fhirId"]
+		self._docs.append(("Patient", member_name))
+		self._docs.append(("Household", hh_name))
+		return hh_name, member_name
+
+	def _track_side_effects(self, encounter_name, member_name):
+		self._docs.append(("Mobile Encounter Context", encounter_name))
+		self._docs.append(("Encounter", encounter_name))
+		case_name = frappe.db.get_value("Case", {"patient": member_name}, "name")
+		if case_name:
+			self._docs.append(("Case", case_name))
+		for obs_name in frappe.get_all("Observation", filters={"encounter": encounter_name}, pluck="name"):
+			self._docs.append(("Observation", obs_name))
+
+	def test_create_processes_iccm_assessment_end_to_end(self):
+		_, member_name = self._make_member("itc-other-req-1", household_ref=500, member_ref=501)
+		payload = {
+			"requestId": "itc-other-req-2",
+			"deviceId": "device-other",
+			"assessments": [
+				{
+					"referenceId": 600,
+					"assessmentType": "ICCM",
+					"assessmentDetails": {"iccm": {"iccmClassification": "Pneumonia"}},
+					"villageId": "0",
+					"patientStatus": "Recovered",
+					"encounter": {"memberId": member_name, "startTime": "2026-10-06 09:00:00"},
+				}
+			],
+		}
+		result = self._create(payload)
+
+		item = next(i for i in result["entityList"] if i["type"] == "Assessment")
+		self.assertEqual(item["status"], "Success")
+		encounter_name = item["fhirId"]
+		self._track_side_effects(encounter_name, member_name)
+
+		encounter = frappe.get_doc("Encounter", encounter_name)
+		self.assertEqual(encounter.docstatus, 1)
 
 
 if __name__ == "__main__":

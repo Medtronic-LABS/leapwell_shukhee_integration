@@ -83,12 +83,13 @@ def create(payload=None):
 			device_id,
 			lambda m=member: mobile_sync.upsert_member(m, device_id),
 		)
-	# assessments: NCD (Phase 3) and the pregnancy-episode programmes (Phase 4
-	# -- ANC/PWPROFILE/PNC_MOTHER/PNC_NEONATE/PREGNANCYOUTCOME) are the fully-
-	# translated programmes so far (see the migration plan); every other
-	# programme type still gets the not-yet-implemented stub below -- a mixed
-	# batch must accept-and-store those too rather than failing the whole
-	# batch.
+	# assessments: NCD (Phase 3), the pregnancy-episode programmes (Phase 4),
+	# and CHILDHOOD_VISIT/ICCM/EYE_CARE/CATARACT/FAMILY_PLANNING (Phase 5) are
+	# the fully-translated programmes so far (see the migration plan) -- that
+	# is now every wire type uhis_lf_mobile actually sends, per its own
+	# CLAUDE.md. Any other/unexpected type still gets the not-yet-implemented
+	# stub below -- a mixed batch must accept-and-store it too rather than
+	# failing the whole batch.
 	for assessment in env.get("assessments") or []:
 		wire_type = (assessment.get("assessmentType") or "").upper()
 		if wire_type == "NCD":
@@ -106,6 +107,14 @@ def create(payload=None):
 				assessment.get("referenceId"),
 				device_id,
 				lambda a=assessment: mobile_sync.process_pregnancy_assessment(a, device_id),
+			)
+		elif wire_type in mobile_sync.OTHER_ASSESSMENT_TYPES:
+			_process_item(
+				batch,
+				"Assessment",
+				assessment.get("referenceId"),
+				device_id,
+				lambda a=assessment: mobile_sync.process_other_assessment(a, device_id),
 			)
 		else:
 			_record_not_yet_implemented(
