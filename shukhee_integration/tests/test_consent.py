@@ -230,24 +230,51 @@ class TestAttachConsentToCall(unittest.TestCase):
 
 	@patch("frappe.db.commit")
 	@patch("frappe.db.set_value")
+	@patch("frappe.db.get_value")
 	@patch("frappe.db.exists")
-	def test_known_call_log_is_stamped(self, mock_exists, mock_set_value, mock_commit):
+	def test_known_call_log_is_stamped(self, mock_exists, mock_get_value, mock_set_value, mock_commit):
+		"""consent_version is resolved server-side from Shukhee Consent (by language), not from
+		the client-supplied version string -- Shukhee Consent has exactly one row per language,
+		and a Link field's value must be that row's own name."""
 		mock_exists.return_value = True
+		mock_get_value.return_value = "1"
 		result = attach_consent_to_call(
 			payload='{"call_log": "CL-1", "consent_version": "2", "lng": "en"}'
 		)
 		self.assertEqual(result, {"attached": True})
+		mock_get_value.assert_called_once_with("Shukhee Consent", {"lng": "en"}, "name")
 		mock_set_value.assert_called_once_with(
-			"Call Logs", "CL-1", {"consent_version": "2", "consent_lng": "en"}
+			"Call Logs", "CL-1", {"consent_version": "1", "consent_lng": "en"}
 		)
 		mock_commit.assert_called_once()
 
 	@patch("frappe.db.commit")
 	@patch("frappe.db.set_value")
+	@patch("frappe.db.get_value")
 	@patch("frappe.db.exists")
-	def test_idempotent_on_repeat_calls(self, mock_exists, mock_set_value, mock_commit):
+	def test_no_matching_consent_row_leaves_link_empty(
+		self, mock_exists, mock_get_value, mock_set_value, mock_commit
+	):
+		"""An unconfigured language (no Shukhee Consent row) is a best-effort no-op on the
+		link value, not an error -- the call_log/lng are still stamped."""
+		mock_exists.return_value = True
+		mock_get_value.return_value = None
+		result = attach_consent_to_call(
+			payload='{"call_log": "CL-1", "consent_version": "2", "lng": "en"}'
+		)
+		self.assertEqual(result, {"attached": True})
+		mock_set_value.assert_called_once_with(
+			"Call Logs", "CL-1", {"consent_version": None, "consent_lng": "en"}
+		)
+
+	@patch("frappe.db.commit")
+	@patch("frappe.db.set_value")
+	@patch("frappe.db.get_value")
+	@patch("frappe.db.exists")
+	def test_idempotent_on_repeat_calls(self, mock_exists, mock_get_value, mock_set_value, mock_commit):
 		"""Safe to call twice (e.g. a retried attach) -- last write wins, no error."""
 		mock_exists.return_value = True
+		mock_get_value.return_value = "1"
 		for _ in range(2):
 			result = attach_consent_to_call(
 				payload='{"call_log": "CL-1", "consent_version": "2", "lng": "en"}'

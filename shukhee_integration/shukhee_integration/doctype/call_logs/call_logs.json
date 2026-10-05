@@ -140,10 +140,11 @@
   },
   {
    "fieldname": "consent_version",
-   "fieldtype": "Data",
+   "fieldtype": "Link",
    "label": "Consent Version",
+   "options": "Shukhee Consent",
    "read_only": 1,
-   "description": "The Shukhee Consent.version the patient agreed to before this call was booked -- attached after the fact (see shukhee_integration.api.consent.attach_consent_to_call), since the consent gate runs before Call Logs exists. Every consent decision (including declines, which never reach this doctype) is separately recorded in Shukhee Consent Log; this is just a convenience denormalization for viewing a specific call."
+   "description": "The Shukhee Consent row (for consent_lng) the patient agreed to before this call was booked -- attached after the fact (see shukhee_integration.api.consent.attach_consent_to_call), since the consent gate runs before Call Logs exists. Shukhee Consent keeps exactly one row per language, edited in place with no version history, so this always opens the CURRENT wording for that language, not necessarily the exact text shown at the time (identical caveat already applies to Shukhee Consent Log.consent_version). Every consent decision (including declines, which never reach this doctype) is separately recorded in Shukhee Consent Log; this is just a convenience denormalization for viewing a specific call."
   },
   {
    "fieldname": "consent_lng",

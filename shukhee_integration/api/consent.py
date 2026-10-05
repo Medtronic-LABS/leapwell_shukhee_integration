@@ -110,7 +110,13 @@ def attach_consent_to_call(payload=None):
 	Mirrors consultation.attach_fhir_encounter_id's exact posture: only call_log is required,
 	an unknown one is a no-op rather than an error (the client can't distinguish "never
 	attached" from "a previous attempt succeeded but the response was lost" and must be free
-	to simply retry), and a repeat call is safe (last write wins)."""
+	to simply retry), and a repeat call is safe (last write wins).
+
+	consent_version is a Link to Shukhee Consent, resolved here from the language the patient
+	saw -- NOT from the client-supplied version string, since Shukhee Consent keeps exactly one
+	row per language (edited in place, no version history) and a Link field's value must be
+	that row's own name. An unconfigured language (no matching row) leaves the link empty
+	rather than erroring -- this attach is always best-effort."""
 	env = _resolve_env(payload)
 	call_log_name = env.get("call_log")
 	if not call_log_name:
@@ -119,10 +125,13 @@ def attach_consent_to_call(payload=None):
 	if not frappe.db.exists("Call Logs", call_log_name):
 		return {"attached": False}
 
+	lng = env.get("lng")
+	consent_name = frappe.db.get_value("Shukhee Consent", {"lng": lng}, "name") if lng else None
+
 	frappe.db.set_value(
 		"Call Logs",
 		call_log_name,
-		{"consent_version": env.get("consent_version"), "consent_lng": env.get("lng")},
+		{"consent_version": consent_name, "consent_lng": lng},
 	)
 	frappe.db.commit()
 	return {"attached": True}
