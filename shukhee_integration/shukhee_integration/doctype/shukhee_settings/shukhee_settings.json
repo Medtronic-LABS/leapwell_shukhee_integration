@@ -6,6 +6,8 @@
  "field_order": [
   "base_url",
   "video_call_base_url",
+  "feature_flags_section",
+  "teleconsult_enabled",
   "consents_section",
   "consents_html"
  ],
@@ -24,6 +26,18 @@
    "fieldtype": "Data",
    "label": "Video Call Base URL",
    "reqd": 1
+  },
+  {
+   "fieldname": "feature_flags_section",
+   "fieldtype": "Section Break",
+   "label": "Feature Flags"
+  },
+  {
+   "default": "0",
+   "description": "Server-side kill-switch for the Shukhee teleconsult (\"Call a doctor\") feature, read by shukhee_integration.api.settings.get_controls. uhis_lf_mobile ANDs this with its own build-time TELECONSULT_ENABLED flag -- both must be true for the feature to appear. Defaults OFF so a build compiled with TELECONSULT_ENABLED=true does not surface the feature against a backend whose Shukhee gateway route hasn't been verified working yet. Flip on only once this environment is confirmed working end-to-end.",
+   "fieldname": "teleconsult_enabled",
+   "fieldtype": "Check",
+   "label": "Teleconsult Enabled"
   },
   {
    "fieldname": "consents_section",
