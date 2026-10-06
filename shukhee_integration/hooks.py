@@ -9,11 +9,7 @@ app_license = "gpl-3.0"
 # ------------------
 
 # Doctypes here Link to Provider (UHIS Shukhee User.uhis, Call Logs.uhis_user).
-# api/offline_sync.py also creates Offline Sync Batch/Offline Sync Item,
-# owned by uhis_lf_sync -- required here so a fresh install doesn't leave
-# that dependency undeclared (frappe.get_doc works by doctype name alone,
-# so this was never caught at runtime until something actually audited it).
-required_apps = ["spice_next_core", "uhis_lf_sync"]
+required_apps = ["spice_next_core"]
 
 # frappe_theme (a spice_next_core dependency, so always present) reads the
 # sva_ft Property Setter on Call Logs.sva_audit_log to render the "Shukhee
@@ -180,7 +176,6 @@ doc_events = {
 scheduler_events = {
 	"daily": [
 		"shukhee_integration.audit.purge_old_audit_logs",
-		"shukhee_integration.reconciliation.reconcile_failed_items",
 	],
 }
 
