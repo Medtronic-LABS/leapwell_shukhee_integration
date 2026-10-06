@@ -287,6 +287,15 @@ def audit_inbound(fn):
 			if response_call_log and not call_log:
 				backfill_call_log(correlation_id, response_call_log)
 
+			# Clear both locals now that this call is done -- a real web request
+			# gets a fresh frappe.local from frappe.destroy() anyway, but nothing
+			# here should rely on that: leaving a stale value set lets an unrelated
+			# later call on the same thread (background job, console, or a test
+			# run that never goes through request teardown) pick up the wrong
+			# call_log/correlation_id.
+			frappe.local.current_call_log = None
+			frappe.local.shukhee_audit_correlation_id = None
+
 	# functools.wraps sets __wrapped__ on every decorator layer that uses it
 	# (this one included), so __wrapped__ alone can't distinguish "wrapped by
 	# audit_inbound" from "wrapped by require_remote_auth" when walking a

@@ -228,12 +228,31 @@ class TestAuditInbound(unittest.TestCase):
 		self.assertIn("nope", kwargs["error"])
 
 	@patch("shukhee_integration.audit.log_call")
-	def test_sets_and_the_correlation_id_and_current_call_log_locals(self, mock_log_call):
+	def test_sets_the_correlation_id_and_current_call_log_locals_for_the_call(self, mock_log_call):
+		seen = {}
+
+		def fn():
+			seen["call_log"] = frappe.local.current_call_log
+			seen["correlation_id"] = frappe.local.shukhee_audit_correlation_id
+			return {}
+
+		with _LocalAttr("form_dict", {"call_log": "CL-1"}):
+			self._wrapped(fn)()
+
+		self.assertEqual(seen["call_log"], "CL-1")
+		self.assertIsNotNone(seen["correlation_id"])
+
+	@patch("shukhee_integration.audit.log_call")
+	def test_clears_current_call_log_and_correlation_id_after_the_call(self, mock_log_call):
+		# A stale value left on frappe.local would let an unrelated later call on
+		# this same thread (background job, console, or another test) pick up
+		# the wrong call_log/correlation_id -- see audit_inbound's docstring.
 		fn = MagicMock(__module__="m", __name__="get_prescription", return_value={})
 		with _LocalAttr("form_dict", {"call_log": "CL-1"}):
 			self._wrapped(fn)()
-			self.assertEqual(frappe.local.current_call_log, "CL-1")
-			self.assertIsNotNone(frappe.local.shukhee_audit_correlation_id)
+
+		self.assertIsNone(frappe.local.current_call_log)
+		self.assertIsNone(frappe.local.shukhee_audit_correlation_id)
 
 
 class TestCaptureInboundRequest(unittest.TestCase):
