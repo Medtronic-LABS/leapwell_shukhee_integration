@@ -7,6 +7,7 @@
  "field_order": [
   "lng",
   "consent",
+  "consent_items",
   "version",
   "current_version",
   "shukhee_settings"
@@ -26,6 +27,13 @@
    "fieldtype": "Text Editor",
    "label": "Consent",
    "reqd": 1
+  },
+  {
+   "description": "Structured checkbox items shown below the consent body (e.g. the mandatory digital-health-services consent, the optional telemedicine-sharing consent) -- get_consent returns these as `items` so the client renders real checkboxes instead of embedding \"[ ] ...\" text in `consent` itself. Reused as-is on Shukhee Consent Version (see that doctype) -- reads of this child table MUST filter on both parenttype and parent, since both parent doctypes autoincrement their own `name` independently and their ids collide.",
+   "fieldname": "consent_items",
+   "fieldtype": "Table",
+   "label": "Consent Items",
+   "options": "Shukhee Consent Item"
   },
   {
    "default": "1",

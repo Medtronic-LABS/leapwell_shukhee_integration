@@ -21,8 +21,19 @@ import frappe
 from frappe import _
 
 from shukhee_integration import shukhee_client
+from shukhee_integration.api.consent import (
+	CONSENT_METHOD_BY_LNG,
+	fill_consent_template,
+	resolve_authoritative_items,
+	resolve_base_consent_html,
+	resolve_consent_version_label,
+	resolve_provider_name,
+	resolve_version_id,
+)
 from shukhee_integration.audit import audit_inbound
-from spice_next_core.auth.decorators import current_remote_user_id, whitelist
+from shukhee_integration.providers import current_provider as _current_provider
+from shukhee_integration.providers import current_shukhee_user as _current_shukhee_user
+from spice_next_core.auth.decorators import whitelist
 
 _TERMINAL_STATUSES = {"completed", "rejected", "cancelled", "on-hold"}
 _DOCUMENT_TYPES = ("prescription", "lab_report", "other")
@@ -34,33 +45,6 @@ def _resolve_env(payload=None):
 	if payload:
 		return frappe.parse_json(payload)
 	return frappe.local.form_dict
-
-
-def _current_provider():
-	"""Resolves the calling SK's identity to a Provider record.
-
-	`current_remote_user_id()` returns whatever the active auth phase decoded
-	from the caller's token: once Phase 2 (remote_auth_url configured) is
-	active, that's the UHIS mobile platform's own login username (e.g.
-	"lf_sk") from the legacy auth-service's /authenticate response --
-	matched here against Provider.username, not Provider.user (a Frappe User
-	link, which the mobile app's identity has no relationship to)."""
-	user_id = current_remote_user_id()
-	provider_name = frappe.db.get_value("Provider", {"username": user_id}, "name")
-	if not provider_name:
-		frappe.throw(_("No Provider record found for the calling user."), frappe.DoesNotExistError)
-	return provider_name
-
-
-def _current_shukhee_user(provider_name):
-	if not frappe.db.exists("UHIS Shukhee User", provider_name):
-		frappe.throw(
-			_("No Shukhee credentials configured for this Provider."), frappe.DoesNotExistError
-		)
-	doc = frappe.get_doc("UHIS Shukhee User", provider_name)
-	if doc.status != "Active":
-		frappe.throw(_("This Provider's Shukhee account is inactive."), frappe.ValidationError)
-	return doc
 
 
 @whitelist(methods=["GET", "POST"], remote_auth=True)
@@ -102,7 +86,19 @@ def start_consultation():
 	Any uploaded documents are attached locally as permanent Files and recorded one-per-row
 	on the created Call Logs record's `medias` child table (type, file, and the Shukhee-side
 	file id that group's upload returned) -- so there's a local audit trail of what the SK
-	showed the doctor, not just Shukhee's own copy of it."""
+	showed the doctor, not just Shukhee's own copy of it.
+
+	Also accepts the patient-consent decision the client captured on the consent gate just
+	before this booking screen (see TeleconsultConsentScreen/get_consent on the mobile side):
+	`version_id` (the Shukhee Consent Version snapshot the patient saw), `lng` (en/bn),
+	`items_checked` (optional, a JSON-stringified positional bool array matching that
+	version's own item order). All optional, for a client predating this rollout -- a
+	booking with none of them still succeeds, just with an empty consent record on the
+	resulting Call Logs row. A Decline never reaches this endpoint at all; it's recorded
+	separately by api.consent.record_consent_decline, since no Call Logs row ever exists for
+	one. Consent fields land directly on the SAME Call Logs row created below
+	(consent_version/consent_lng/consent_items/consent_filled_text) -- there is no separate
+	consent doctype or later linking step for an Agreed decision."""
 	env = frappe.local.form_dict
 	contact_number = env.get("contact_number")
 	reason = env.get("reason")
@@ -112,6 +108,10 @@ def start_consultation():
 	patient_dob = env.get("patient_dob")
 	patient_gender = env.get("patient_gender")
 	clinical_data = frappe.parse_json(env.get("clinical_data")) if env.get("clinical_data") else None
+	consent_lng = env.get("lng")
+	consent_items_checked = (
+		frappe.parse_json(env.get("items_checked")) if env.get("items_checked") else []
+	)
 
 	uhis_patient_id = env.get("uhis_patient_id")
 	patient = None
@@ -134,6 +134,43 @@ def start_consultation():
 		)
 
 	provider_name = _current_provider()
+
+	# Resolved before any of Shukhee's own (irreversible, external) calls below -- see
+	# this function's own module docstring on why these consent helpers live in
+	# api/consent.py rather than being duplicated here. A patient Declines instead of
+	# reaching this endpoint at all (see api.consent.record_consent_decline), so every
+	# field set here always describes an Agreed decision; version_id/lng are optional
+	# only for a client predating this rollout, degrading to an empty consent record
+	# rather than blocking booking.
+	consent_version_id = resolve_version_id(env)
+	consent_authoritative_items = (
+		resolve_authoritative_items(consent_version_id, consent_lng) if consent_lng else []
+	)
+	consent_item_rows = [
+		{
+			"description": item["description"],
+			"mandatory": item["mandatory"],
+			"checked": bool(consent_items_checked[idx]) if idx < len(consent_items_checked) else False,
+		}
+		for idx, item in enumerate(consent_authoritative_items)
+	]
+	consent_filled_text = (
+		fill_consent_template(
+			resolve_base_consent_html(consent_version_id, consent_lng),
+			{
+				"participant_name": patient_name,
+				"participant_id": uhis_patient_id or "",
+				"date_time": frappe.utils.format_datetime(frappe.utils.now_datetime(), "yyyy-MM-dd HH:mm"),
+				"language": "বাংলা" if consent_lng == "bn" else "English",
+				"chw_name": resolve_provider_name(provider_name, consent_lng),
+				"consent_version": resolve_consent_version_label(consent_version_id),
+				"consent_method": CONSENT_METHOD_BY_LNG.get(consent_lng, CONSENT_METHOD_BY_LNG["en"]),
+			},
+		)
+		if consent_lng
+		else None
+	)
+
 	shukhee_user_doc = _current_shukhee_user(provider_name)
 
 	shukhee_patient_id, patient_details = shukhee_client.find_or_create_shukhee_patient(
@@ -214,6 +251,10 @@ def start_consultation():
 			"transaction_id": transaction_id,
 			"call_url": call_url,
 			"status": "pending",
+			"consent_version": consent_version_id,
+			"consent_lng": consent_lng,
+			"consent_items": consent_item_rows,
+			"consent_filled_text": consent_filled_text,
 		}
 	)
 	call_log.insert(ignore_permissions=True)

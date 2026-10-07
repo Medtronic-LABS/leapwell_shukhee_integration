@@ -24,13 +24,14 @@ class IntegrationTestShukheeConsent(IntegrationTestCase):
 		# not test fixtures).
 		self._created_consent_names = []
 
-	def _make_consent(self, lng="en", version="1", consent="<p>v1</p>"):
+	def _make_consent(self, lng="en", version="1", consent="<p>v1</p>", consent_items=None):
 		doc = frappe.get_doc(
 			{
 				"doctype": "Shukhee Consent",
 				"lng": lng,
 				"version": version,
 				"consent": consent,
+				"consent_items": consent_items or [],
 			}
 		).insert(ignore_permissions=True)
 		self._created_consent_names.append(doc.name)
@@ -101,6 +102,67 @@ class IntegrationTestShukheeConsent(IntegrationTestCase):
 		self.assertEqual(len(versions), 2)
 		self.assertEqual(versions[1]["version"], "1")
 		self.assertEqual(versions[1]["consent"], "<p>v1, edited</p>")
+
+	def test_snapshot_copies_consent_items(self):
+		doc = self._make_consent(
+			consent_items=[
+				{"description": "Mandatory item", "mandatory": 1},
+				{"description": "Optional item", "mandatory": 0},
+			]
+		)
+
+		version_name = frappe.db.get_value("Shukhee Consent", doc.name, "current_version")
+		snapshot_items = frappe.get_all(
+			"Shukhee Consent Item",
+			filters={"parenttype": "Shukhee Consent Version", "parent": version_name},
+			fields=["description", "mandatory"],
+			order_by="idx asc",
+		)
+		self.assertEqual(
+			[(i["description"], bool(i["mandatory"])) for i in snapshot_items],
+			[("Mandatory item", True), ("Optional item", False)],
+		)
+
+	def test_resaving_with_no_consent_items_change_does_not_create_another_snapshot(self):
+		"""Regression guard: has_value_changed() can't be used for a Table field (it compares
+		child-Document list instances by identity, not content, so it's True on every save) --
+		on_update must use a normalized comparison instead, or every no-op Desk save of Shukhee
+		Consent would spawn a new immutable Version."""
+		doc = self._make_consent(
+			consent_items=[{"description": "Mandatory item", "mandatory": 1}]
+		)
+		first_current_version = frappe.db.get_value("Shukhee Consent", doc.name, "current_version")
+
+		doc.reload()
+		doc.save()
+
+		versions = frappe.get_all("Shukhee Consent Version", filters={"shukhee_consent": doc.name})
+		self.assertEqual(len(versions), 1)
+		self.assertEqual(
+			frappe.db.get_value("Shukhee Consent", doc.name, "current_version"), first_current_version
+		)
+
+	def test_adding_a_consent_item_creates_a_new_snapshot_even_if_version_label_is_unchanged(self):
+		doc = self._make_consent(consent_items=[{"description": "Mandatory item", "mandatory": 1}])
+
+		doc.reload()
+		doc.append("consent_items", {"description": "Optional item", "mandatory": 0})
+		doc.save()
+
+		versions = frappe.get_all(
+			"Shukhee Consent Version",
+			filters={"shukhee_consent": doc.name},
+			fields=["name"],
+			order_by="creation asc",
+		)
+		self.assertEqual(len(versions), 2)
+		snapshot_items = frappe.get_all(
+			"Shukhee Consent Item",
+			filters={"parenttype": "Shukhee Consent Version", "parent": versions[1]["name"]},
+			fields=["description"],
+			order_by="idx asc",
+		)
+		self.assertEqual([i["description"] for i in snapshot_items], ["Mandatory item", "Optional item"])
 
 	def test_bumping_version_label_creates_a_new_snapshot(self):
 		doc = self._make_consent()

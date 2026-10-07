@@ -52,6 +52,10 @@
   "clinical_data_preview",
   "audit_log_tab",
   "sva_audit_log",
+  "consent_tab",
+  "consent_items",
+  "consent_filled_text",
+  "sva_consent_log",
   "sync_seq"
  ],
  "fields": [
@@ -144,7 +148,7 @@
    "label": "Consent Version",
    "options": "Shukhee Consent Version",
    "read_only": 1,
-   "description": "The exact Shukhee Consent Version snapshot the patient saw before this call was booked -- attached after the fact (see shukhee_integration.api.consent.attach_consent_to_call), since the consent gate runs before Call Logs exists, trusted directly from the client's version_id (captured once at get_consent time), never re-resolved from Shukhee Consent (which keeps only the current, editable copy -- see that doctype's current_version field). Every consent decision (including declines, which never reach this doctype) is separately recorded in Shukhee Consent Log; this is just a convenience denormalization for viewing a specific call."
+   "description": "The exact Shukhee Consent Version snapshot the patient saw -- set at booking time, in the same start_consultation insert as the rest of this row (trusted directly from the client's version_id, captured once at get_consent time; never re-resolved from Shukhee Consent, which keeps only the current, editable copy -- see that doctype's current_version field). A Declined decision never reaches this doctype at all -- see Shukhee Consent Decline."
   },
   {
    "fieldname": "consent_lng",
@@ -325,6 +329,32 @@
    "fieldtype": "HTML",
    "label": "Audit Log",
    "description": "Rendered as a chronological lifecycle timeline of Shukhee Call Audit Log rows for this call -- see the sva_ft Property Setter fixture on this field (Custom HTML Block: Shukhee Call Audit Timeline)."
+  },
+  {
+   "fieldname": "consent_tab",
+   "fieldtype": "Tab Break",
+   "label": "Consent"
+  },
+  {
+   "fieldname": "consent_items",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Consent Items",
+   "options": "Call Log Consent Item",
+   "description": "Which checkbox items were shown and whether each was ticked, zipped server-side (in start_consultation) from the resolved consent_version's own Shukhee Consent Item rows against the client's positional items_checked booleans -- the description/mandatory columns here are never trusted from client-supplied text, only checked is. Hidden -- rendered by sva_consent_log/the Shukhee Call Consent Custom HTML Block instead of the default grid, same pattern as medias/medias_gallery above."
+  },
+  {
+   "fieldname": "consent_filled_text",
+   "fieldtype": "Text Editor",
+   "hidden": 1,
+   "label": "Consent Filled Text",
+   "description": "Server-rendered copy of the resolved consent_version's consent HTML with its {{participant_name}}/{{participant_id}}/{{date_time}}/{{language}}/{{chw_name}}/{{consent_version}}/{{consent_method}} tokens substituted from server-resolved values at booking time -- an immutable record of the exact filled-in text this patient was shown, independent of any later change to Patient/Provider names. Hidden -- rendered by sva_consent_log instead."
+  },
+  {
+   "fieldname": "sva_consent_log",
+   "fieldtype": "HTML",
+   "label": "Consent",
+   "description": "Renders this row's own consent_items/consent_filled_text directly (no separate doctype, no frappe.call -- see the sva_ft Property Setter fixture on this field, Custom HTML Block: Shukhee Call Consent). A call only ever exists for an Agreed decision (a decline never reaches start_consultation/Call Logs -- see Shukhee Consent Decline), so there is no decision status to render here."
   },
   {
    "fieldname": "sync_seq",

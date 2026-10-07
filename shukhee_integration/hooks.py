@@ -14,14 +14,19 @@ required_apps = ["spice_next_core"]
 # frappe_theme (a spice_next_core dependency, so always present) reads the
 # sva_ft Property Setter on Call Logs.sva_audit_log to render the "Shukhee
 # Call Audit Timeline" Custom HTML Block (see shukhee_integration/api/audit.py
-# for the whitelisted method it calls) in the Audit Log tab. Shukhee
-# Settings.consents_html carries its own sva_ft Property Setter too, embedding
-# a live grid of Shukhee Consent rows. Filtered to just these doctypes' own
-# property setters / this app's own block, not every sva_ft or Custom HTML
-# Block on the site.
+# for the whitelisted method it calls) in the Audit Log tab, and on
+# Call Logs.sva_consent_log to render "Shukhee Call Consent" (reads that same
+# Call Logs row's own consent_items/consent_filled_text fields directly, no
+# whitelisted method call) in the Consent tab. Shukhee Settings.consents_html
+# carries its own sva_ft Property Setter too, embedding a live grid of Shukhee
+# Consent rows. Filtered to just these doctypes' own property setters / this
+# app's own blocks, not every sva_ft or Custom HTML Block on the site.
 fixtures = [
 	{"dt": "Property Setter", "filters": [["doc_type", "in", ["Call Logs", "Shukhee Settings"]]]},
-	{"dt": "Custom HTML Block", "filters": [["name", "in", ["Shukhee Call Audit Timeline"]]]},
+	{
+		"dt": "Custom HTML Block",
+		"filters": [["name", "in", ["Shukhee Call Audit Timeline", "Shukhee Call Consent"]]],
+	},
 ]
 
 # Each item in the list will be shown as an app in the apps page
@@ -179,10 +184,12 @@ scheduler_events = {
 	],
 }
 
-# Shukhee Consent Log (shukhee_integration/shukhee_integration/doctype/shukhee_consent_log/)
+# Shukhee Consent Decline (shukhee_integration/shukhee_integration/doctype/shukhee_consent_decline/)
 # deliberately gets NO purge job here, unlike Shukhee Call Audit Log's 180-day one above --
 # it's a legal consent record, not a debug/observability log, so it must persist for as long
-# as the underlying patient data does. See that doctype's controller docstring.
+# as the underlying patient data does. See that doctype's controller docstring. (An Agreed
+# decision isn't a standalone doctype at all -- it's fields on the Call Logs row itself, which
+# already has no purge job of its own.)
 
 # Testing
 # -------
