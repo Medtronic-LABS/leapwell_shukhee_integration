@@ -11,6 +11,16 @@
  },
  {
   "doctype": "Property Setter",
+  "name": "Call Logs-sva_consent_log-sva_ft",
+  "doctype_or_field": "DocField",
+  "doc_type": "Call Logs",
+  "field_name": "sva_consent_log",
+  "property": "sva_ft",
+  "property_type": "JSON",
+  "value": "{\"property_type\": \"Custom HTML Block\", \"html_block\": \"Shukhee Call Consent\"}"
+ },
+ {
+  "doctype": "Property Setter",
   "name": "Shukhee Settings-consents_html-sva_ft",
   "doctype_or_field": "DocField",
   "doc_type": "Shukhee Settings",

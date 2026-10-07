@@ -1,0 +1,50 @@
+{
+ "actions": [],
+ "creation": "2026-10-07 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "description",
+  "mandatory",
+  "checked"
+ ],
+ "fields": [
+  {
+   "description": "Copied verbatim from the resolved Shukhee Consent Version's own Shukhee Consent Item rows at the moment this call was booked -- never trusted from client-supplied text, so this is an immutable record of exactly what checkbox text the patient was actually shown.",
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "in_list_view": 1,
+   "label": "Description",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Copied from the same resolved item row -- whether this checkbox was mandatory to proceed at the time it was shown.",
+   "fieldname": "mandatory",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Mandatory"
+  },
+  {
+   "default": "0",
+   "description": "Whether the patient/SK actually ticked this checkbox -- the one piece of this row that IS client-supplied (as a positional boolean array, zipped against the server's own item list by index).",
+   "fieldname": "checked",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Checked"
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-07 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Shukhee Integration",
+ "name": "Call Log Consent Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "hide_toolbar": 1
+}

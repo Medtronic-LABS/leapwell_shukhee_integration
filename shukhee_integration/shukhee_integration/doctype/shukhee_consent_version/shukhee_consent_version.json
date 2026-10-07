@@ -8,7 +8,8 @@
   "shukhee_consent",
   "lng",
   "version",
-  "consent"
+  "consent",
+  "consent_items"
  ],
  "fields": [
   {
@@ -43,6 +44,13 @@
    "label": "Consent",
    "description": "Immutable HTML snapshot of Shukhee Consent.consent at the moment this version was saved -- never edited after creation. This is what Call Logs.consent_version / Shukhee Consent Log.consent_version actually link to, so a historical call or decision always resolves to the exact wording that was live when it happened, not whatever Shukhee Consent currently holds.",
    "reqd": 1
+  },
+  {
+   "fieldname": "consent_items",
+   "fieldtype": "Table",
+   "label": "Consent Items",
+   "options": "Shukhee Consent Item",
+   "description": "Immutable snapshot of Shukhee Consent.consent_items at the moment this version was saved -- same child doctype reused from Shukhee Consent, built as plain dicts in ShukheeConsent.on_update (never the live row's own child Document instances). record_consent_decision resolves its authoritative item list from here, not from the live Shukhee Consent row, since this call can happen long after the live row was edited again."
   }
  ],
  "links": [],

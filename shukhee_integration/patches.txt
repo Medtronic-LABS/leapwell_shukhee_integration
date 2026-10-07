@@ -6,5 +6,5 @@
 shukhee_integration.shukhee_integration.doctype.call_logs.patches.v0_backfill_call_logs_sync_fields
 shukhee_integration.shukhee_integration.doctype.shukhee_consent.patches.v0_backfill_consent_versions
 shukhee_integration.shukhee_integration.doctype.call_logs.patches.v1_relink_consent_version
-shukhee_integration.shukhee_integration.doctype.shukhee_consent_log.patches.v0_relink_consent_version
+shukhee_integration.shukhee_integration.doctype.call_logs.patches.v2_drop_shukhee_consent_log
 # Patches added in this section will be executed after doctypes are migrated

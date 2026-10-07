@@ -1,11 +1,15 @@
 """
 Unit tests for shukhee_integration.api.consultation.
 
-These specifically guard the spice_next_core rename: consultation.py imports
-`current_remote_user_id`/`whitelist` from spice_next_core.auth.decorators (not
-uhis_next_core) — TestSpiceNextCoreIntegration below fails loudly (ImportError at
-collection, or an identity mismatch) if that dependency is ever pointed at a stale or
-divergent copy instead of the real spice_next_core module.
+These specifically guard the spice_next_core rename: consultation.py imports `whitelist`
+from spice_next_core.auth.decorators (not uhis_next_core) — TestSpiceNextCoreIntegration
+below fails loudly (ImportError at collection, or an identity mismatch) if that dependency
+is ever pointed at a stale or divergent copy instead of the real spice_next_core module.
+`current_remote_user_id` itself now lives behind shukhee_integration.providers (see
+tests/test_providers.py for its own identity/resolution-logic coverage) --
+_current_provider/_current_shukhee_user below are aliases onto that module's real functions
+(not reimplementations), which is exactly what TestCurrentShukheeUser's tests confirm by
+calling them directly; this file carries no separate "resolution logic" tests of its own.
 
 Every other test class below calls each endpoint via inspect.unwrap(...) — the raw
 business logic underneath frappe.whitelist's own argument-typing wrapper, then
@@ -23,6 +27,7 @@ wired through the require_remote_auth guard.
 import inspect
 import json
 import unittest
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import frappe
@@ -110,11 +115,6 @@ class TestSpiceNextCoreIntegration(unittest.TestCase):
 
 		self.assertIs(consultation.whitelist, real_whitelist)
 
-	def test_current_remote_user_id_is_the_real_spice_next_core_function(self):
-		from spice_next_core.auth.decorators import current_remote_user_id as real_fn
-
-		self.assertIs(consultation.current_remote_user_id, real_fn)
-
 	def test_all_endpoints_registered_under_remote_auth_whitelist(self):
 		# Each endpoint must be both Frappe-whitelisted and a guest method (remote_auth=True
 		# implies allow_guest=True) — proves the whitelist() wrapper actually ran, not just
@@ -197,51 +197,21 @@ class TestResolveEnv(unittest.TestCase):
 		self.assertEqual(result, {"call_log": "CL-2"})
 
 
-class TestCurrentProvider(unittest.TestCase):
+class TestCurrentProviderShukheeUserAliases(unittest.TestCase):
+	"""_current_provider/_current_shukhee_user are aliases onto shukhee_integration.providers'
+	real functions (see this module's own docstring) -- their actual resolution-logic behavior
+	is tested once, directly, in tests/test_providers.py. This just confirms the alias wiring
+	itself didn't drift (e.g. a future edit reintroducing a local reimplementation here)."""
 
-	@patch("shukhee_integration.api.consultation.current_remote_user_id")
-	@patch("frappe.db.get_value")
-	def test_matches_by_username_not_by_frappe_user_link(self, mock_get_value, mock_user_id):
-		mock_user_id.return_value = "lf_sk"
-		mock_get_value.return_value = "PROV-1"
+	def test_current_provider_is_the_real_providers_function(self):
+		from shukhee_integration.providers import current_provider
 
-		result = consultation._current_provider()
+		self.assertIs(consultation._current_provider, current_provider)
 
-		self.assertEqual(result, "PROV-1")
-		mock_get_value.assert_called_once_with("Provider", {"username": "lf_sk"}, "name")
+	def test_current_shukhee_user_is_the_real_providers_function(self):
+		from shukhee_integration.providers import current_shukhee_user
 
-	@patch("shukhee_integration.api.consultation.current_remote_user_id")
-	@patch("frappe.db.get_value")
-	def test_no_matching_provider_raises(self, mock_get_value, mock_user_id):
-		mock_user_id.return_value = "unknown_user"
-		mock_get_value.return_value = None
-		with self.assertRaises(frappe.DoesNotExistError):
-			consultation._current_provider()
-
-
-class TestCurrentShukheeUser(unittest.TestCase):
-
-	@patch("frappe.get_doc")
-	@patch("frappe.db.exists")
-	def test_active_user_returns_doc(self, mock_exists, mock_get_doc):
-		mock_exists.return_value = True
-		doc = MagicMock(status="Active")
-		mock_get_doc.return_value = doc
-		self.assertIs(consultation._current_shukhee_user("PROV-1"), doc)
-
-	@patch("frappe.db.exists")
-	def test_no_shukhee_credentials_raises(self, mock_exists):
-		mock_exists.return_value = False
-		with self.assertRaises(frappe.DoesNotExistError):
-			consultation._current_shukhee_user("PROV-1")
-
-	@patch("frappe.get_doc")
-	@patch("frappe.db.exists")
-	def test_inactive_account_raises(self, mock_exists, mock_get_doc):
-		mock_exists.return_value = True
-		mock_get_doc.return_value = MagicMock(status="Inactive")
-		with self.assertRaises(frappe.ValidationError):
-			consultation._current_shukhee_user("PROV-1")
+		self.assertIs(consultation._current_shukhee_user, current_shukhee_user)
 
 
 class TestGetSpecialities(unittest.TestCase):
@@ -382,6 +352,134 @@ class TestStartConsultation(unittest.TestCase):
 			mock_shukhee_client.book_instant_call.call_args.kwargs["clinical_data"],
 			{"vitals": [{"temperature": "99"}]},
 		)
+
+	@patch("frappe.utils.now_datetime")
+	@patch("frappe.db.commit")
+	@patch("frappe.get_doc")
+	@patch("shukhee_integration.api.consultation.shukhee_client")
+	@patch("shukhee_integration.api.consultation._current_shukhee_user")
+	@patch("shukhee_integration.api.consultation._current_provider")
+	@patch("shukhee_integration.api.consultation.resolve_consent_version_label")
+	@patch("shukhee_integration.api.consultation.resolve_provider_name")
+	@patch("shukhee_integration.api.consultation.resolve_base_consent_html")
+	@patch("shukhee_integration.api.consultation.resolve_authoritative_items")
+	@patch("shukhee_integration.api.consultation.resolve_version_id")
+	def test_embeds_consent_fields_directly_on_the_call_log(
+		self,
+		mock_resolve_version_id,
+		mock_resolve_items,
+		mock_resolve_html,
+		mock_resolve_provider_name,
+		mock_resolve_version_label,
+		mock_current_provider,
+		mock_current_shukhee_user,
+		mock_shukhee_client,
+		mock_get_doc,
+		mock_commit,
+		mock_now_datetime,
+	):
+		"""An Agreed decision is never recorded by a separate doctype/endpoint -- it's set
+		directly on the same Call Logs row this function creates, in the same insert. No
+		attach_consent_to_call, no linking step."""
+		mock_current_provider.return_value = "PROV-1"
+		mock_current_shukhee_user.return_value = MagicMock()
+		mock_shukhee_client.find_or_create_shukhee_patient.return_value = ("sk-p1", {"fullName": "Jane"})
+		mock_shukhee_client.upload_medias.return_value = []
+		mock_shukhee_client.resolve_speciality_id.return_value = ("1", "General Medicine")
+		mock_shukhee_client.book_instant_call.return_value = "txn-1"
+		mock_shukhee_client.resolve_request_id.return_value = "req-1"
+		mock_shukhee_client.get_valid_token.return_value = "tok-1"
+		mock_shukhee_client.build_video_call_url.return_value = "https://video/call/req-1"
+		mock_get_doc.return_value = MagicMock(name="CL-1", status="pending")
+
+		mock_resolve_version_id.return_value = "VER-1"
+		mock_resolve_items.return_value = [
+			{"description": "Mandatory consent", "mandatory": 1},
+			{"description": "Optional telemedicine sharing", "mandatory": 0},
+		]
+		mock_resolve_html.return_value = "{{participant_name}}|{{chw_name}}|{{language}}"
+		mock_resolve_provider_name.return_value = "Dr. Rahman"
+		mock_resolve_version_label.return_value = "2"
+		# frappe.utils.now_datetime() internally touches frappe.get_doc("System Settings"),
+		# which collides with frappe.get_doc being mocked above for an unrelated reason
+		# (building the Call Logs doc) -- pinning this avoids a PicklingError trying to cache
+		# the resulting MagicMock.
+		mock_now_datetime.return_value = datetime(2026, 1, 1, 12, 0)
+
+		with _LocalAttr(
+			"form_dict",
+			{
+				"contact_number": "01410820112",
+				"reason": "fever",
+				"requested_speciality": "General Medicine",
+				"patient_name": "Jane Doe",
+				"version_id": "VER-1",
+				"lng": "en",
+				"items_checked": json.dumps([True, False]),
+			},
+		), _LocalAttr("request", MagicMock(files=None)):
+			start_consultation()
+
+		mock_resolve_version_id.assert_called_once()
+		mock_resolve_items.assert_called_once_with("VER-1", "en")
+
+		(doc_dict,), _kwargs = mock_get_doc.call_args
+		self.assertEqual(doc_dict["consent_version"], "VER-1")
+		self.assertEqual(doc_dict["consent_lng"], "en")
+		self.assertEqual(
+			doc_dict["consent_items"],
+			[
+				{"description": "Mandatory consent", "mandatory": 1, "checked": True},
+				{"description": "Optional telemedicine sharing", "mandatory": 0, "checked": False},
+			],
+		)
+		# participant_name comes from the form's own plain-text patient_name, not a Patient
+		# doctype lookup keyed on uhis_patient_id (see this function's own doc comment).
+		self.assertEqual(doc_dict["consent_filled_text"], "Jane Doe|Dr. Rahman|English")
+
+	@patch("frappe.db.commit")
+	@patch("frappe.get_doc")
+	@patch("shukhee_integration.api.consultation.shukhee_client")
+	@patch("shukhee_integration.api.consultation._current_shukhee_user")
+	@patch("shukhee_integration.api.consultation._current_provider")
+	def test_missing_consent_fields_degrade_to_empty_without_raising(
+		self,
+		mock_current_provider,
+		mock_current_shukhee_user,
+		mock_shukhee_client,
+		mock_get_doc,
+		mock_commit,
+	):
+		"""A client predating this rollout (or one that simply never reached the consent
+		gate) still books successfully -- just with an empty consent record, not a blocked
+		call. version_id/lng/items_checked are all optional."""
+		mock_current_provider.return_value = "PROV-1"
+		mock_current_shukhee_user.return_value = MagicMock()
+		mock_shukhee_client.find_or_create_shukhee_patient.return_value = ("sk-p1", {"fullName": "Jane"})
+		mock_shukhee_client.upload_medias.return_value = []
+		mock_shukhee_client.resolve_speciality_id.return_value = ("1", "General Medicine")
+		mock_shukhee_client.book_instant_call.return_value = "txn-1"
+		mock_shukhee_client.resolve_request_id.return_value = "req-1"
+		mock_shukhee_client.get_valid_token.return_value = "tok-1"
+		mock_shukhee_client.build_video_call_url.return_value = "https://video/call/req-1"
+		mock_get_doc.return_value = MagicMock(name="CL-1", status="pending")
+
+		with _LocalAttr(
+			"form_dict",
+			{
+				"contact_number": "01410820112",
+				"reason": "fever",
+				"requested_speciality": "General Medicine",
+			},
+		), _LocalAttr("request", MagicMock(files=None)):
+			result = start_consultation()
+
+		self.assertEqual(result["call_url"], "https://video/call/req-1")
+		(doc_dict,), _kwargs = mock_get_doc.call_args
+		self.assertIsNone(doc_dict["consent_version"])
+		self.assertIsNone(doc_dict["consent_lng"])
+		self.assertEqual(doc_dict["consent_items"], [])
+		self.assertIsNone(doc_dict["consent_filled_text"])
 
 	@patch("shukhee_integration.api.consultation._current_shukhee_user")
 	@patch("shukhee_integration.api.consultation._current_provider")
