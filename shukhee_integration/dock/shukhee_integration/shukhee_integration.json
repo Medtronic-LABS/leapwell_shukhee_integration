@@ -1,0 +1,22 @@
+[
+ {
+  "app": "shukhee_integration",
+  "docstatus": 0,
+  "doctype": "Dock",
+  "idx": 0,
+  "items": [
+   {
+    "added": 0,
+    "hidden": 0,
+    "icon": "video",
+    "link_to": "Shukhee Integration",
+    "link_type": "Sidebar",
+    "title": "Shukhee"
+   }
+  ],
+  "mount_on": "uhis",
+  "name": "shukhee_integration",
+  "standard": 1,
+  "user": ""
+ }
+]
